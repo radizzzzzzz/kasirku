@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "KasirKu",
+    "slug": "kasirku",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.kasirku.app"
+    },
+    "plugins": [
+      "expo-asset"
+    ]
+  }
+}
