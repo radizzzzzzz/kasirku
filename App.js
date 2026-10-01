@@ -8,12 +8,18 @@ import {
   StatusBar,
   ActivityIndicator,
   Modal,
+  Alert,
+  Platform,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from './src/constants/theme';
 import { StorageService } from './src/services/storage';
+import { AuthService } from './src/services/secureStorage';
+import { showAlert } from './src/utils/alert';
 
 // Screens
+import AuthScreen from './src/screens/AuthScreen';
 import KasirScreen from './src/screens/KasirScreen';
 import MenuScreen from './src/screens/MenuScreen';
 import ShiftScreen from './src/screens/ShiftScreen';
@@ -25,6 +31,7 @@ import Header from './src/components/Header';
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
+  const [authSession, setAuthSession] = useState(null);
   const [activeTab, setActiveTab] = useState('KASIR'); // KASIR | MENU | SHIFT | PRESENSI | RIWAYAT
 
   // Central Application State
@@ -40,13 +47,24 @@ export default function App() {
   // Global Profile Switcher Modal
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
+  // Supervisor Access Control
+  const isSupervisor = AuthService.isSupervisorRole(authSession?.user?.role);
+  const [isSupervisorAuthorized, setIsSupervisorAuthorized] = useState(false);
+  const [isSupervisorAuthModalOpen, setIsSupervisorAuthModalOpen] = useState(false);
+  const [supervisorPinInput, setSupervisorPinInput] = useState('');
+  const [supervisorAuthError, setSupervisorAuthError] = useState('');
+  const [authorizedSupervisorName, setAuthorizedSupervisorName] = useState('');
+  const [isVerifyingSupervisor, setIsVerifyingSupervisor] = useState(false);
+
   // Initial load
   useEffect(() => {
     async function loadData() {
       try {
+        // Initialize Local Storage & Secure Storage
         await StorageService.init();
+        await AuthService.init();
 
-        const [prods, emps, activeEmp, shift, shiftHist, attend, txs, store] =
+        const [prods, emps, activeEmp, shift, shiftHist, attend, txs, store, session] =
           await Promise.all([
             StorageService.getProducts(),
             StorageService.getEmployees(),
@@ -56,6 +74,7 @@ export default function App() {
             StorageService.getAttendance(),
             StorageService.getTransactions(),
             StorageService.getStoreInfo(),
+            AuthService.getSession(),
           ]);
 
         setProducts(prods || []);
@@ -66,6 +85,7 @@ export default function App() {
         setAttendanceList(attend || []);
         setTransactions(txs || []);
         setStoreInfo(store || null);
+        setAuthSession(session || null);
       } catch (err) {
         console.error('Error loading app data:', err);
       } finally {
@@ -76,10 +96,75 @@ export default function App() {
     loadData();
   }, []);
 
+  const handleLoginSuccess = async (session, emp) => {
+    setAuthSession(session);
+    if (emp) {
+      setActiveEmployee(emp);
+    }
+    const freshEmployees = await StorageService.getEmployees();
+    setEmployees(freshEmployees || []);
+  };
+
+  const handleLogout = () => {
+    const executeLogout = async () => {
+      await AuthService.logout();
+      setAuthSession(null);
+      setIsProfileModalOpen(false);
+      setIsSupervisorAuthorized(false);
+      setIsSupervisorAuthModalOpen(false);
+    };
+
+    showAlert(
+      'Konfirmasi Keluar',
+      'Apakah Anda yakin ingin keluar dari KasirKu? Sesi login Anda akan ditutup.',
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Keluar', style: 'destructive', onPress: executeLogout },
+      ]
+    );
+  };
+
+  const handlePressProfile = () => {
+    if (isSupervisor || isSupervisorAuthorized) {
+      setIsProfileModalOpen(true);
+    } else {
+      setSupervisorPinInput('');
+      setSupervisorAuthError('');
+      setIsSupervisorAuthModalOpen(true);
+    }
+  };
+
+  const handleVerifySupervisor = async () => {
+    if (!supervisorPinInput.trim()) {
+      setSupervisorAuthError('Silakan masukkan PIN atau Password Supervisor!');
+      return;
+    }
+
+    setIsVerifyingSupervisor(true);
+    setSupervisorAuthError('');
+    try {
+      const res = await AuthService.verifySupervisorAuth(supervisorPinInput);
+      setIsSupervisorAuthorized(true);
+      setAuthorizedSupervisorName(res.supervisorName);
+      setIsSupervisorAuthModalOpen(false);
+      setSupervisorPinInput('');
+      setIsProfileModalOpen(true);
+    } catch (err) {
+      setSupervisorAuthError(err.message || 'Verifikasi Supervisor gagal.');
+    } finally {
+      setIsVerifyingSupervisor(false);
+    }
+  };
+
+  const handleCloseProfileModal = () => {
+    setIsProfileModalOpen(false);
+    setIsSupervisorAuthorized(false);
+  };
+
   const handleSelectEmployee = async (emp) => {
     setActiveEmployee(emp);
     await StorageService.setActiveEmployee(emp);
-    setIsProfileModalOpen(false);
+    handleCloseProfileModal();
   };
 
   const handleTransactionComplete = async (newTx) => {
@@ -91,9 +176,31 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={THEME.colors.primary} />
-        <Text style={styles.loadingText}>Memuat KasirKu...</Text>
+      <View style={styles.appContainer}>
+        <View style={styles.responsiveWrapper}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={THEME.colors.primary} />
+            <Text style={styles.loadingText}>Memuat KasirKu...</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // If user is not authenticated, render AuthScreen
+  if (!authSession) {
+    return (
+      <View style={styles.appContainer}>
+        <View style={styles.responsiveWrapper}>
+          <SafeAreaView style={styles.safeArea}>
+            <StatusBar
+              barStyle="dark-content"
+              backgroundColor="#FFFFFF"
+              translucent={Platform.OS === 'android'}
+            />
+            <AuthScreen onLoginSuccess={handleLoginSuccess} />
+          </SafeAreaView>
+        </View>
       </View>
     );
   }
@@ -116,16 +223,23 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    <View style={styles.appContainer}>
+      <View style={styles.responsiveWrapper}>
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar
+            barStyle="dark-content"
+            backgroundColor="#FFFFFF"
+            translucent={Platform.OS === 'android'}
+          />
 
-      {/* Top Universal Header */}
-      <Header
-        title={getScreenTitle()}
-        activeEmployee={activeEmployee}
-        activeShift={activeShift}
-        onPressProfile={() => setIsProfileModalOpen(true)}
-      />
+          {/* Top Universal Header */}
+          <Header
+            title={getScreenTitle()}
+            activeEmployee={activeEmployee}
+            activeShift={activeShift}
+            onPressProfile={() => setIsProfileModalOpen(true)}
+            onLogout={handleLogout}
+          />
 
       {/* Screen Views */}
       <View style={styles.screenContainer}>
@@ -329,17 +443,65 @@ export default function App() {
                 );
               })}
             </View>
+
+            {/* Active Secure Session Card */}
+            {authSession?.user && (
+              <View style={styles.sessionBadgeCard}>
+                <View style={styles.sessionBadgeHeader}>
+                  <Ionicons name="shield-checkmark" size={15} color={THEME.colors.success} />
+                  <Text style={styles.sessionBadgeTitle}>Sesi Secure Storage Aktif</Text>
+                </View>
+                <Text style={styles.sessionBadgeUser}>
+                  Akun: {authSession.user.name} ({authSession.user.username || authSession.user.email})
+                </Text>
+                <Text style={styles.sessionBadgeRole}>Peran: {authSession.user.role}</Text>
+              </View>
+            )}
+
+            {/* Logout Button */}
+            <TouchableOpacity
+              style={styles.modalLogoutBtn}
+              onPress={handleLogout}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="log-out-outline" size={18} color={THEME.colors.danger} />
+              <Text style={styles.modalLogoutText}>Keluar dari Akun (Logout)</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+        </SafeAreaView>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  appContainer: {
+    flex: 1,
+    backgroundColor: Platform.OS === 'web' ? '#0F172A' : '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  responsiveWrapper: {
+    flex: 1,
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 480 : '100%',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web'
+      ? {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 12 },
+          shadowOpacity: 0.35,
+          shadowRadius: 25,
+        }
+      : {}),
+  },
   safeArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   loadingContainer: {
     flex: 1,
@@ -362,8 +524,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: THEME.colors.border,
     paddingTop: 8,
-    paddingBottom: 10,
-    elevation: 10,
+    paddingBottom: Platform.OS === 'ios' ? 10 : 14,
+    elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.06,
@@ -405,6 +567,7 @@ const styles = StyleSheet.create({
   },
   profileModalCard: {
     width: '100%',
+    maxWidth: 440,
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 20,
@@ -466,5 +629,51 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: THEME.colors.textMuted,
     marginTop: 2,
+  },
+  sessionBadgeCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  sessionBadgeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  sessionBadgeTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME.colors.success,
+  },
+  sessionBadgeUser: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.colors.text,
+  },
+  sessionBadgeRole: {
+    fontSize: 10,
+    color: THEME.colors.textMuted,
+    marginTop: 2,
+  },
+  modalLogoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: THEME.colors.dangerLight,
+    paddingVertical: 12,
+    borderRadius: 14,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    gap: 8,
+  },
+  modalLogoutText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: THEME.colors.danger,
   },
 });

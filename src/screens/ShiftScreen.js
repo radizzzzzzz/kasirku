@@ -7,11 +7,13 @@ import {
   ScrollView,
   TextInput,
   Modal,
-  Alert,
+  Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { StorageService } from '../services/storage';
+import { showAlert } from '../utils/alert';
 
 export default function ShiftScreen({
   activeShift,
@@ -44,7 +46,7 @@ export default function ShiftScreen({
   // Tutup Shift
   const handleConfirmEndShift = async () => {
     if (!actualCash) {
-      Alert.alert('Perhatian', 'Masukkan jumlah uang fisik di laci kasir.');
+      showAlert('Perhatian', 'Masukkan jumlah uang fisik di laci kasir.');
       return;
     }
 
@@ -79,7 +81,7 @@ export default function ShiftScreen({
     setActualCash('');
     setClosingNotes('');
 
-    Alert.alert(
+    showAlert(
       'Shift Ditutup',
       `Rekap shift berhasil disimpan!\nSelisih Kas: ${StorageService.formatIDR(cashDifference)}`
     );
@@ -108,7 +110,7 @@ export default function ShiftScreen({
     onUpdateActiveShift(newShift);
     setIsStartShiftModalOpen(false);
 
-    Alert.alert('Shift Dimulai', `${newShift.shiftName} telah aktif.`);
+    showAlert('Shift Dimulai', `${newShift.shiftName} telah aktif.`);
   };
 
   return (
@@ -281,7 +283,10 @@ export default function ShiftScreen({
 
       {/* MODAL END SHIFT / TUTUP SHIFT */}
       <Modal visible={isEndShiftModalOpen} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <View>
@@ -427,12 +432,15 @@ export default function ShiftScreen({
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* MODAL START SHIFT / BUKA SHIFT BARU */}
       <Modal visible={isStartShiftModalOpen} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <View>
@@ -504,7 +512,7 @@ export default function ShiftScreen({
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </ScrollView>
   );
@@ -784,12 +792,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'flex-end',
+    alignItems: 'center',
   },
   modalContent: {
+    width: '100%',
+    maxWidth: 480,
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '90%',
+    overflow: 'hidden',
+    ...THEME.shadows.lg,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -881,6 +894,8 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: THEME.colors.text,
+    paddingVertical: 0,
+    textAlignVertical: 'center',
   },
   presetMatchBtn: {
     flexDirection: 'row',
@@ -939,9 +954,11 @@ const styles = StyleSheet.create({
   modalFooter: {
     flexDirection: 'row',
     padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
     borderTopWidth: 1,
     borderTopColor: THEME.colors.border,
     gap: 10,
+    backgroundColor: '#FFFFFF',
   },
   cancelBtn: {
     flex: 1,

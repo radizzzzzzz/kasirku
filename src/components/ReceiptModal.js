@@ -7,11 +7,12 @@ import {
   TouchableOpacity,
   ScrollView,
   Share,
-  Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { StorageService } from '../services/storage';
+import { showAlert } from '../utils/alert';
 
 export default function ReceiptModal({ visible, transaction, onClose, storeInfo }) {
   if (!transaction) return null;
@@ -63,12 +64,30 @@ ${store.footerMessage}
 ================================
       `;
 
-      await Share.share({
-        message: receiptText.trim(),
-        title: `Nota Transaksi ${transaction.id}`,
-      });
+      const trimmedText = receiptText.trim();
+
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          await navigator.share({
+            title: `Nota Transaksi ${transaction.id}`,
+            text: trimmedText,
+          });
+        } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+          await navigator.clipboard.writeText(trimmedText);
+          showAlert('Nota Disalin', 'Teks nota transaksi berhasil disalin ke clipboard!');
+        } else {
+          showAlert('Nota Transaksi', trimmedText);
+        }
+      } else {
+        await Share.share({
+          message: trimmedText,
+          title: `Nota Transaksi ${transaction.id}`,
+        });
+      }
     } catch (error) {
-      Alert.alert('Gagal Membagikan', error.message);
+      if (error && error.name !== 'AbortError') {
+        showAlert('Informasi', error.message || 'Gagal membagikan nota.');
+      }
     }
   };
 
@@ -237,6 +256,7 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: '100%',
+    maxWidth: 440,
     maxHeight: '90%',
     backgroundColor: '#FFFFFF',
     borderRadius: 18,

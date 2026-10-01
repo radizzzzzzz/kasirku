@@ -91,6 +91,17 @@ export const StorageService = {
 
   // Employees
   getEmployees: async () => safeGet(KEYS.EMPLOYEES, INITIAL_EMPLOYEES),
+  saveEmployees: async (employees) => safeSet(KEYS.EMPLOYEES, employees),
+  addEmployee: async (emp) => {
+    const list = await safeGet(KEYS.EMPLOYEES, INITIAL_EMPLOYEES);
+    const exists = list.some((e) => e.id === emp.id || e.name.toLowerCase() === emp.name.toLowerCase());
+    if (!exists) {
+      const updated = [...list, emp];
+      await safeSet(KEYS.EMPLOYEES, updated);
+      return updated;
+    }
+    return list;
+  },
   getActiveEmployee: async () => safeGet(KEYS.ACTIVE_EMPLOYEE, INITIAL_EMPLOYEES[0]),
   setActiveEmployee: async (emp) => safeSet(KEYS.ACTIVE_EMPLOYEE, emp),
 

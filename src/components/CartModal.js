@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
   TextInput,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
@@ -133,12 +134,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'flex-end',
+    alignItems: 'center',
   },
   sheetContainer: {
+    width: '100%',
+    maxWidth: 480,
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '85%',
+    overflow: 'hidden',
     ...THEME.shadows.lg,
   },
   header: {
@@ -263,9 +268,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: THEME.colors.text,
     paddingVertical: 0,
+    textAlignVertical: 'center',
   },
   footer: {
     padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
     borderTopWidth: 1,
     borderTopColor: THEME.colors.border,
     backgroundColor: '#FFFFFF',

@@ -12,8 +12,13 @@
     "android": {
       "package": "com.kasirku.app"
     },
+    "web": {
+      "favicon": "./assets/qris.jpg",
+      "bundler": "metro"
+    },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      "expo-secure-store"
     ]
   }
 }

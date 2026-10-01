@@ -7,11 +7,15 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Alert,
+  Image,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { StorageService } from '../services/storage';
+import { showAlert } from '../utils/alert';
+
+const QRIS_IMAGE = require('../../assets/qris.jpg');
 
 export default function PaymentModal({
   visible,
@@ -22,6 +26,7 @@ export default function PaymentModal({
   const [method, setMethod] = useState('TUNAI'); // 'TUNAI' | 'QRIS'
   const [cashGiven, setCashGiven] = useState('');
   const [discountPercent, setDiscountPercent] = useState(0);
+  const [isQrZoomed, setIsQrZoomed] = useState(false);
 
   const discountAmount = Math.round((totalAmount * discountPercent) / 100);
   const grandTotal = Math.max(0, totalAmount - discountAmount);
@@ -44,7 +49,7 @@ export default function PaymentModal({
 
   const handlePay = () => {
     if (method === 'TUNAI' && !isCashSufficient) {
-      Alert.alert('Uang Kurang', `Uang tunai kurang ${StorageService.formatIDR(Math.abs(change))}`);
+      showAlert('Uang Kurang', `Uang tunai kurang ${StorageService.formatIDR(Math.abs(change))}`);
       return;
     }
 
@@ -226,19 +231,49 @@ export default function PaymentModal({
             ) : (
               /* QRIS View */
               <View style={styles.qrisSection}>
+                {/* Merchant Header Info */}
+                <View style={styles.merchantHeaderCard}>
+                  <View style={styles.merchantLogoBadge}>
+                    <Ionicons name="game-controller" size={20} color="#FFFFFF" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.merchantTitleRow}>
+                      <Text style={styles.merchantName}>radiz gaming</Text>
+                      <View style={styles.qrisOfficialBadge}>
+                        <Text style={styles.qrisOfficialText}>QRIS RESMI</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.merchantNMID}>NMID: ID1026562556963 • A01</Text>
+                  </View>
+                </View>
+
+                {/* QR Image Card */}
                 <View style={styles.qrisCard}>
-                  <View style={styles.qrisHeader}>
-                    <Text style={styles.qrisBadge}>QRIS STANDAR PEMBAYARAN NASIONAL</Text>
+                  <TouchableOpacity
+                    style={styles.qrisImageContainer}
+                    onPress={() => setIsQrZoomed(true)}
+                    activeOpacity={0.9}
+                  >
+                    <Image
+                      source={QRIS_IMAGE}
+                      style={styles.qrisImage}
+                      resizeMode="contain"
+                    />
+                    <View style={styles.zoomHintOverlay}>
+                      <Ionicons name="expand-outline" size={13} color="#FFFFFF" />
+                      <Text style={styles.zoomHintText}>Ketuk untuk perbesar</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <View style={styles.qrisAmountBanner}>
+                    <Text style={styles.qrisAmountLabel}>Nominal Pembayaran:</Text>
+                    <Text style={styles.qrisAmountValue}>
+                      {StorageService.formatIDR(grandTotal)}
+                    </Text>
                   </View>
-                  <View style={styles.qrisBox}>
-                    <Ionicons name="qr-code" size={140} color="#0F172A" />
-                  </View>
-                  <Text style={styles.qrisNMID}>NMID: ID1029384756201</Text>
-                  <Text style={styles.qrisAmount}>
-                    Nominal: {StorageService.formatIDR(grandTotal)}
-                  </Text>
+
                   <Text style={styles.qrisHint}>
-                    Mendukung GoPay, OVO, Dana, ShopeePay, BCA, Mandiri, BRI, dll.
+                    Pindai QRIS di atas dengan BCA, Mandiri, BRI, BNI, GoPay, OVO, DANA, ShopeePay, atau m-Banking apapun.
                   </Text>
                 </View>
               </View>
@@ -265,6 +300,35 @@ export default function PaymentModal({
           </View>
         </View>
       </View>
+
+      {/* Fullscreen QR Zoom Modal */}
+      <Modal visible={isQrZoomed} transparent animationType="fade">
+        <View style={styles.zoomModalOverlay}>
+          <View style={styles.zoomModalHeader}>
+            <View>
+              <Text style={styles.zoomModalTitle}>QRIS radiz gaming</Text>
+              <Text style={styles.zoomModalSubtitle}>Tunjukkan ke pelanggan untuk dipindai</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.zoomModalCloseBtn}
+              onPress={() => setIsQrZoomed(false)}
+            >
+              <Ionicons name="close" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.zoomImageWrapper}>
+            <Image
+              source={QRIS_IMAGE}
+              style={styles.zoomedImage}
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.zoomAmountFooter}>
+            <Text style={styles.zoomAmountLabel}>Total Tagihan:</Text>
+            <Text style={styles.zoomAmountValue}>{StorageService.formatIDR(grandTotal)}</Text>
+          </View>
+        </View>
+      </Modal>
     </Modal>
   );
 }
@@ -274,12 +338,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'flex-end',
+    alignItems: 'center',
   },
   sheetContainer: {
+    width: '100%',
+    maxWidth: 480,
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '92%',
+    overflow: 'hidden',
     ...THEME.shadows.lg,
   },
   header: {
@@ -452,6 +520,8 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     color: THEME.colors.text,
+    paddingVertical: 0,
+    textAlignVertical: 'center',
   },
   changeBox: {
     flexDirection: 'row',
@@ -479,58 +549,187 @@ const styles = StyleSheet.create({
   },
   qrisSection: {
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 4,
+  },
+  merchantHeaderCard: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 10,
+    gap: 10,
+    ...THEME.shadows.sm,
+  },
+  merchantLogoBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#DC2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  merchantTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  merchantName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: THEME.colors.text,
+  },
+  qrisOfficialBadge: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  qrisOfficialText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#DC2626',
+  },
+  merchantNMID: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+    fontWeight: '600',
+    marginTop: 2,
   },
   qrisCard: {
     width: '100%',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    padding: 16,
+    padding: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     ...THEME.shadows.sm,
   },
-  qrisHeader: {
-    backgroundColor: '#DC2626',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-    marginBottom: 12,
-  },
-  qrisBadge: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  qrisBox: {
-    padding: 12,
-    backgroundColor: '#F8FAFC',
+  qrisImageContainer: {
+    width: '100%',
+    height: 360,
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  qrisNMID: {
+  qrisImage: {
+    width: '100%',
+    height: '100%',
+  },
+  zoomHintOverlay: {
+    position: 'absolute',
+    bottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    gap: 5,
+  },
+  zoomHintText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  qrisAmountBanner: {
+    width: '100%',
+    backgroundColor: THEME.colors.primaryLight,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  qrisAmountLabel: {
     fontSize: 11,
     fontWeight: '600',
     color: THEME.colors.textMuted,
-    marginTop: 10,
   },
-  qrisAmount: {
-    fontSize: 15,
+  qrisAmountValue: {
+    fontSize: 20,
     fontWeight: '800',
-    color: THEME.colors.text,
-    marginTop: 4,
+    color: THEME.colors.primaryDark,
+    marginTop: 2,
   },
   qrisHint: {
     fontSize: 11,
-    color: THEME.colors.textLight,
+    color: THEME.colors.textMuted,
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: 10,
+    lineHeight: 16,
+  },
+  zoomModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    justifyContent: 'space-between',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  zoomModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 10,
+  },
+  zoomModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  zoomModalSubtitle: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  zoomModalCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  zoomImageWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  zoomedImage: {
+    width: '100%',
+    height: '100%',
+  },
+  zoomAmountFooter: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+  },
+  zoomAmountLabel: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
+    fontWeight: '600',
+  },
+  zoomAmountValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: THEME.colors.primary,
+    marginTop: 2,
   },
   footer: {
     padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
     borderTopWidth: 1,
     borderTopColor: THEME.colors.border,
     backgroundColor: '#FFFFFF',

@@ -65,6 +65,18 @@ Aplikasi ini dibangun menggunakan **React Native + Expo** dengan bahasa **JavaSc
 - Filter transaksi berdasarkan metode pembayaran (*Semua, Tunai, QRIS*).
 - Klik kartu transaksi mana saja untuk membuka kembali **Nota Digital**.
 
+### 7. Otentikasi & Arsitektur Dual-Storage (Secure Storage & Local Storage)
+- **Layar Login & Registrasi Akun**:
+  - Validasi username/email dan password sebelum dapat mengakses sistem kasir.
+  - Fitur intip password (show/hide password).
+  - Opsi *Ingat Sesi Login* (*Remember Me*).
+  - Pilihan cepat akun demo (1-klik isi akun bawaan untuk mempermudah testing).
+  - Registrasi user baru dengan pemilihan peran (*Kasir & Barista, Kasir & Kitchen, Supervisor, Admin*).
+  - Fitur **Logout / Keluar Sesi** langsung dari Header atau modal profil kasir.
+- **Arsitektur Dual Storage**:
+  - 🔐 **Secure Storage (`expo-secure-store`)**: Menyimpan kata sandi, token otentikasi sesi aktif, dan kredensial login terenkripsi secara aman menggunakan hardware Keystore (Android) / Keychain (iOS) dengan fallback yang aman.
+  - 💾 **Local Storage (`AsyncStorage`)**: Menyimpan data operasional aplikasi offline seperti katalog produk, keranjang, riwayat shift, transaksi, dan data toko.
+
 ---
 
 ## 📁 Struktur Folder Proyek
@@ -77,14 +89,16 @@ try_mobile/
 │   │   ├── initialData.js   # Data awal produk, pekerja, info toko
 │   │   └── theme.js         # Sistem warna, tipografi, bayangan (shadow)
 │   ├── services/
-│   │   └── storage.js       # Wrapper AsyncStorage untuk persistensi offline
+│   │   ├── storage.js       # Local Storage (AsyncStorage) untuk data transaksi, katalog, shift
+│   │   └── secureStorage.js # Secure Storage (Hardware Keystore/Keychain) untuk auth & password
 │   ├── components/
-│   │   ├── Header.js        # Header atas dengan profil kasir & status shift
+│   │   ├── Header.js        # Header atas dengan profil kasir, logout & status shift
 │   │   ├── ProductCard.js   # Kartu produk dengan kontrol jumlah & stok
 │   │   ├── CartModal.js     # Drawer keranjang pesanan
 │   │   ├── PaymentModal.js  # Modal pembayaran Tunai & QRIS
 │   │   └── ReceiptModal.js  # Modal Nota Digital + Fitur Share
 │   └── screens/
+│       ├── AuthScreen.js    # Layar Autentikasi (Login & Registrasi User)
 │       ├── KasirScreen.js   # Layar Kasir POS utama
 │       ├── MenuScreen.js    # Layar Manajemen Menu & Harga
 │       ├── ShiftScreen.js   # Layar Buka & Tutup Shift (Rekonsiliasi Kas)

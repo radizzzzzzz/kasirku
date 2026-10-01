@@ -7,13 +7,15 @@ import {
   ScrollView,
   TextInput,
   Modal,
-  Alert,
   Switch,
+  Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { INITIAL_CATEGORIES } from '../constants/initialData';
 import { StorageService } from '../services/storage';
+import { showAlert } from '../utils/alert';
 
 export default function MenuScreen({ products, onUpdateProducts }) {
   const [selectedCategory, setSelectedCategory] = useState('Semua');
@@ -60,12 +62,12 @@ export default function MenuScreen({ products, onUpdateProducts }) {
 
   const handleSaveProduct = async () => {
     if (!name.trim()) {
-      Alert.alert('Perhatian', 'Nama menu wajib diisi.');
+      showAlert('Perhatian', 'Nama menu wajib diisi.');
       return;
     }
     const priceNum = parseInt(price.replace(/[^0-9]/g, ''), 10);
     if (!priceNum || priceNum <= 0) {
-      Alert.alert('Perhatian', 'Harga jual harus lebih dari 0.');
+      showAlert('Perhatian', 'Harga jual harus lebih dari 0.');
       return;
     }
 
@@ -109,7 +111,7 @@ export default function MenuScreen({ products, onUpdateProducts }) {
   };
 
   const handleDeleteProduct = (productId, productName) => {
-    Alert.alert(
+    showAlert(
       'Hapus Menu',
       `Yakin ingin menghapus "${productName}" dari daftar menu?`,
       [
@@ -271,7 +273,10 @@ export default function MenuScreen({ products, onUpdateProducts }) {
 
       {/* Add / Edit Modal */}
       <Modal visible={isModalOpen} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
@@ -379,7 +384,7 @@ export default function MenuScreen({ products, onUpdateProducts }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -571,12 +576,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'flex-end',
+    alignItems: 'center',
   },
   modalContent: {
+    width: '100%',
+    maxWidth: 480,
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '90%',
+    overflow: 'hidden',
+    ...THEME.shadows.lg,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -613,6 +623,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: THEME.colors.text,
     marginBottom: 14,
+    textAlignVertical: 'center',
   },
   textArea: {
     height: 70,
@@ -661,9 +672,11 @@ const styles = StyleSheet.create({
   modalFooter: {
     flexDirection: 'row',
     padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
     borderTopWidth: 1,
     borderTopColor: THEME.colors.border,
     gap: 10,
+    backgroundColor: '#FFFFFF',
   },
   cancelBtn: {
     flex: 1,

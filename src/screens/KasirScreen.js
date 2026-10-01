@@ -6,12 +6,12 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { INITIAL_CATEGORIES } from '../constants/initialData';
 import { StorageService } from '../services/storage';
+import { showAlert } from '../utils/alert';
 import ProductCard from '../components/ProductCard';
 import CartModal from '../components/CartModal';
 import PaymentModal from '../components/PaymentModal';
@@ -36,7 +36,7 @@ export default function KasirScreen({
   // Cart operations
   const handleAddToCart = (product) => {
     if (product.stock <= 0) {
-      Alert.alert('Stok Habis', 'Produk ini sedang tidak tersedia.');
+      showAlert('Stok Habis', 'Produk ini sedang tidak tersedia.');
       return;
     }
 
@@ -44,7 +44,7 @@ export default function KasirScreen({
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
         if (existing.quantity >= product.stock) {
-          Alert.alert('Batas Stok', `Maksimal stok tersedia hanya ${product.stock}`);
+          showAlert('Batas Stok', `Maksimal stok tersedia hanya ${product.stock}`);
           return prev;
         }
         return prev.map((item) =>
@@ -74,7 +74,7 @@ export default function KasirScreen({
     } else {
       const prod = products.find((p) => p.id === productId);
       if (prod && newQty > prod.stock) {
-        Alert.alert('Batas Stok', `Maksimal stok tersedia hanya ${prod.stock}`);
+        showAlert('Batas Stok', `Maksimal stok tersedia hanya ${prod.stock}`);
         return;
       }
       setCart((prev) =>
@@ -90,7 +90,7 @@ export default function KasirScreen({
   };
 
   const handleClearCart = () => {
-    Alert.alert('Kosongkan Keranjang', 'Apakah Anda yakin ingin menghapus semua item?', [
+    showAlert('Kosongkan Keranjang', 'Apakah Anda yakin ingin menghapus semua item?', [
       { text: 'Batal', style: 'cancel' },
       { text: 'Ya, Kosongkan', style: 'destructive', onPress: () => setCart([]) },
     ]);
@@ -333,6 +333,8 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     color: THEME.colors.text,
+    paddingVertical: 0,
+    textAlignVertical: 'center',
   },
   categoryScroll: {
     paddingVertical: 10,

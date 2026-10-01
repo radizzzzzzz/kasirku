@@ -109,7 +109,7 @@ export const INITIAL_PRODUCTS = [
 ];
 
 export const INITIAL_STORE_INFO = {
-  name: 'KasirKu Cafe & Eatery',
+  name: 'radiz gaming',
   tagline: 'Modern POS, Presensi & Shift',
   address: 'Jl. Kampus Merdeka No. 45, Gedung Fasilkom',
   phone: '0812-9988-7766',
