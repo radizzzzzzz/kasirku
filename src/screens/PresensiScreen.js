@@ -117,10 +117,10 @@ export default function PresensiScreen({
     const updatedList = attendanceList.map((item) =>
       item.id === currentEmpRecord.id
         ? {
-            ...item,
-            clockOut: outTime,
-            workDuration: durationStr,
-          }
+          ...item,
+          clockOut: outTime,
+          workDuration: durationStr,
+        }
         : item
     );
 
@@ -179,8 +179,8 @@ export default function PresensiScreen({
                 currentEmpRecord?.status === 'Terlambat'
                   ? styles.badgeWarning
                   : currentEmpRecord?.clockIn
-                  ? styles.badgeSuccess
-                  : styles.badgeNeutral,
+                    ? styles.badgeSuccess
+                    : styles.badgeNeutral,
               ]}
             >
               <Text
@@ -189,8 +189,8 @@ export default function PresensiScreen({
                   currentEmpRecord?.status === 'Terlambat'
                     ? styles.badgeTextWarning
                     : currentEmpRecord?.clockIn
-                    ? styles.badgeTextSuccess
-                    : styles.badgeTextNeutral,
+                      ? styles.badgeTextSuccess
+                      : styles.badgeTextNeutral,
                 ]}
               >
                 {currentEmpRecord ? currentEmpRecord.status : 'Belum Hadir'}
@@ -221,7 +221,7 @@ export default function PresensiScreen({
               styles.clockButton,
               styles.clockOutBtn,
               (!currentEmpRecord?.clockIn || currentEmpRecord?.clockOut) &&
-                styles.clockBtnDisabled,
+              styles.clockBtnDisabled,
             ]}
             onPress={handleClockOut}
             disabled={!currentEmpRecord?.clockIn || !!currentEmpRecord?.clockOut}
