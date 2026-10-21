@@ -7,6 +7,7 @@ import {
   ScrollView,
   Alert,
   Modal,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
@@ -16,11 +17,25 @@ export default function PresensiScreen({
   activeEmployee,
   employees,
   onSelectEmployee,
-  attendanceList,
+  attendanceList = [],
   onUpdateAttendance,
+  isOnline = true,
 }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isSwitchEmployeeModal, setIsSwitchEmployeeModal] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const freshAttendance = await StorageService.getAttendance();
+      onUpdateAttendance(freshAttendance || []);
+    } catch (e) {
+      console.warn('Presensi refresh error:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Live timer
   useEffect(() => {
@@ -134,7 +149,18 @@ export default function PresensiScreen({
   };
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.container}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          colors={[THEME.colors.primary]}
+          tintColor={THEME.colors.primary}
+        />
+      }
+    >
       {/* Real-time Clock Card */}
       <View style={styles.clockCard}>
         <Text style={styles.todayDateText}>{todayStr}</Text>

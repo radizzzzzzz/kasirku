@@ -11,11 +11,14 @@ import {
   Alert,
   Platform,
   TextInput,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from './src/constants/theme';
 import { StorageService } from './src/services/storage';
 import { AuthService } from './src/services/secureStorage';
+import { ApiClient, ApiEventLogs } from './src/services/api';
+import { networkService } from './src/services/network';
 import { showAlert } from './src/utils/alert';
 
 // Screens
@@ -28,6 +31,7 @@ import RiwayatScreen from './src/screens/RiwayatScreen';
 
 // Components
 import Header from './src/components/Header';
+import ApiStateView from './src/components/ApiStateView';
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -45,16 +49,37 @@ export default function App() {
   const [storeInfo, setStoreInfo] = useState(null);
 
   // Global Profile Switcher Modal
+  // History Login Users & Switch Account with Password Verification
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [loginHistory, setLoginHistory] = useState([]);
+  const [switchAccountTarget, setSwitchAccountTarget] = useState(null);
+  const [switchPasswordInput, setSwitchPasswordInput] = useState('');
+  const [switchPasswordError, setSwitchPasswordError] = useState('');
+  const [isSwitchPasswordModalOpen, setIsSwitchPasswordModalOpen] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
 
-  // Supervisor Access Control
-  const isSupervisor = AuthService.isSupervisorRole(authSession?.user?.role);
-  const [isSupervisorAuthorized, setIsSupervisorAuthorized] = useState(false);
-  const [isSupervisorAuthModalOpen, setIsSupervisorAuthModalOpen] = useState(false);
-  const [supervisorPinInput, setSupervisorPinInput] = useState('');
-  const [supervisorAuthError, setSupervisorAuthError] = useState('');
-  const [authorizedSupervisorName, setAuthorizedSupervisorName] = useState('');
-  const [isVerifyingSupervisor, setIsVerifyingSupervisor] = useState(false);
+  // Helper supervisor check for account switching privilege
+  const isSupervisor =
+    AuthService.isSupervisorRole(authSession?.user?.role) ||
+    AuthService.isSupervisorRole(activeEmployee?.role);
+
+  const handleSelectEmployee = async (emp) => {
+    setActiveEmployee(emp);
+    await StorageService.setActiveEmployee(emp);
+  };
+
+  const [isOnline, setIsOnline] = useState(networkService.isConnected());
+
+  useEffect(() => {
+    // [1] App started log
+    ApiClient.logAppStarted();
+
+    // Listen to network changes (Task 03)
+    const unsub = networkService.subscribe((online) => {
+      setIsOnline(online);
+    });
+    return unsub;
+  }, []);
 
   // Initial load
   useEffect(() => {
@@ -64,7 +89,7 @@ export default function App() {
         await StorageService.init();
         await AuthService.init();
 
-        const [prods, emps, activeEmp, shift, shiftHist, attend, txs, store, session] =
+        const [prods, emps, activeEmp, shift, shiftHist, attend, txs, store, session, loginHist] =
           await Promise.all([
             StorageService.getProducts(),
             StorageService.getEmployees(),
@@ -75,9 +100,21 @@ export default function App() {
             StorageService.getTransactions(),
             StorageService.getStoreInfo(),
             AuthService.getSession(),
+            StorageService.getLoginHistory(),
           ]);
 
-        setProducts(prods || []);
+        // Load products (use protected endpoint if session exists)
+        let loadedProducts = prods || [];
+        if (session && session.token) {
+          try {
+            const protectedProds = await ApiClient.getProtectedProducts();
+            if (protectedProds) loadedProducts = protectedProds;
+          } catch (e) {
+            console.warn('Initial protected product load fallback:', e);
+          }
+        }
+
+        setProducts(loadedProducts);
         setEmployees(emps || []);
         setActiveEmployee(activeEmp || null);
         setActiveShift(shift || null);
@@ -86,6 +123,7 @@ export default function App() {
         setTransactions(txs || []);
         setStoreInfo(store || null);
         setAuthSession(session || null);
+        setLoginHistory(loginHist || []);
       } catch (err) {
         console.error('Error loading app data:', err);
       } finally {
@@ -101,17 +139,26 @@ export default function App() {
     if (emp) {
       setActiveEmployee(emp);
     }
+    try {
+      // Panggil protected endpoint GET /products menggunakan Bearer token (Task 02)
+      const protectedProducts = await ApiClient.getProtectedProducts();
+      setProducts(protectedProducts || []);
+    } catch (e) {
+      console.warn('Gagal memuat protected products pada login:', e);
+    }
     const freshEmployees = await StorageService.getEmployees();
     setEmployees(freshEmployees || []);
+    const freshHistory = await StorageService.getLoginHistory();
+    setLoginHistory(freshHistory || []);
   };
 
   const handleLogout = () => {
     const executeLogout = async () => {
-      await AuthService.logout();
+      // Panggil ApiClient.logout() -> menghapus access_token dari SecureStore
+      await ApiClient.logout();
       setAuthSession(null);
       setIsProfileModalOpen(false);
-      setIsSupervisorAuthorized(false);
-      setIsSupervisorAuthModalOpen(false);
+      setIsSwitchPasswordModalOpen(false);
     };
 
     showAlert(
@@ -125,46 +172,137 @@ export default function App() {
   };
 
   const handlePressProfile = () => {
-    if (isSupervisor || isSupervisorAuthorized) {
-      setIsProfileModalOpen(true);
-    } else {
-      setSupervisorPinInput('');
-      setSupervisorAuthError('');
-      setIsSupervisorAuthModalOpen(true);
-    }
+    setIsProfileModalOpen(true);
   };
 
-  const handleVerifySupervisor = async () => {
-    if (!supervisorPinInput.trim()) {
-      setSupervisorAuthError('Silakan masukkan PIN atau Password Supervisor!');
+  const handleInitiateSwitchAccount = (targetUser) => {
+    // Jika akun target adalah akun yang sedang aktif saat ini
+    const isCurrentActive =
+      (authSession?.user?.id && authSession.user.id === targetUser.id) ||
+      (authSession?.user?.username && authSession.user.username === targetUser.username);
+
+    if (isCurrentActive) {
+      showAlert('Informasi', `Anda saat ini sedang bertugas sebagai ${targetUser.name}.`);
       return;
     }
 
-    setIsVerifyingSupervisor(true);
-    setSupervisorAuthError('');
+    // Jika user saat ini adalah SUPERVISOR, dapat langsung beralih akun
+    if (isSupervisor) {
+      showAlert(
+        'Konfirmasi Supervisor',
+        `Sebagai Supervisor, apakah Anda ingin langsung beralih ke akun ${targetUser.name}?`,
+        [
+          { text: 'Batal', style: 'cancel' },
+          {
+            text: 'Beralih Akun',
+            onPress: () => executeSwitchAccountDirectly(targetUser),
+          },
+        ]
+      );
+      return;
+    }
+
+    // User biasa (non-supervisor) TIDAK DAPAT mengakses akun lain tanpa kata sandi!
+    setSwitchAccountTarget(targetUser);
+    setSwitchPasswordInput('');
+    setSwitchPasswordError('');
+    setIsSwitchPasswordModalOpen(true);
+  };
+
+  const handleConfirmSwitchWithPassword = async () => {
+    if (!switchPasswordInput.trim()) {
+      setSwitchPasswordError('Silakan masukkan kata sandi akun ini!');
+      return;
+    }
+
+    setIsSwitching(true);
+    setSwitchPasswordError('');
     try {
-      const res = await AuthService.verifySupervisorAuth(supervisorPinInput);
-      setIsSupervisorAuthorized(true);
-      setAuthorizedSupervisorName(res.supervisorName);
-      setIsSupervisorAuthModalOpen(false);
-      setSupervisorPinInput('');
-      setIsProfileModalOpen(true);
+      // Login via ApiClient dengan password target user
+      const { session } = await ApiClient.login(
+        switchAccountTarget.username || switchAccountTarget.email,
+        switchPasswordInput
+      );
+
+      const emps = await StorageService.getEmployees();
+      let matchedEmp = emps.find(
+        (e) =>
+          (session.user.employeeId && e.id === session.user.employeeId) ||
+          e.name.toLowerCase() === session.user.name.toLowerCase()
+      );
+
+      if (!matchedEmp) {
+        matchedEmp = {
+          id: session.user.employeeId || `EMP-${Date.now().toString().slice(-4)}`,
+          name: session.user.name,
+          role: session.user.role,
+          phone: '0812-0000-0000',
+          pin: '1234',
+        };
+        await StorageService.addEmployee(matchedEmp);
+      }
+
+      await StorageService.setActiveEmployee(matchedEmp);
+      await StorageService.recordLoginHistory(session.user);
+      const freshHistory = await StorageService.getLoginHistory();
+      setLoginHistory(freshHistory || []);
+
+      setAuthSession(session);
+      setActiveEmployee(matchedEmp);
+
+      // Refresh data produk terlindungi untuk sesi baru
+      try {
+        const prods = await ApiClient.getProtectedProducts();
+        setProducts(prods || []);
+      } catch (e) {
+        console.warn('Fallback refresh products:', e);
+      }
+
+      setIsSwitchPasswordModalOpen(false);
+      setIsProfileModalOpen(false);
+      setSwitchPasswordInput('');
+      setSwitchAccountTarget(null);
+
+      showAlert(
+        'Beralih Akun Berhasil',
+        `Sekarang Anda bertugas sebagai ${session.user.name} (${session.user.role}).`
+      );
     } catch (err) {
-      setSupervisorAuthError(err.message || 'Verifikasi Supervisor gagal.');
+      setSwitchPasswordError(err.message || 'Kata sandi salah. Akses ditolak!');
     } finally {
-      setIsVerifyingSupervisor(false);
+      setIsSwitching(false);
     }
   };
 
-  const handleCloseProfileModal = () => {
-    setIsProfileModalOpen(false);
-    setIsSupervisorAuthorized(false);
-  };
+  const executeSwitchAccountDirectly = async (targetUser) => {
+    try {
+      const users = await AuthService.getAllUsers();
+      const fullTarget = users.find(
+        (u) => u.id === targetUser.id || u.username === targetUser.username
+      );
 
-  const handleSelectEmployee = async (emp) => {
-    setActiveEmployee(emp);
-    await StorageService.setActiveEmployee(emp);
-    handleCloseProfileModal();
+      if (fullTarget) {
+        const { session } = await ApiClient.login(fullTarget.username, fullTarget.password);
+        setAuthSession(session);
+
+        const emps = await StorageService.getEmployees();
+        const matched = emps.find(
+          (e) => e.name.toLowerCase() === targetUser.name.toLowerCase()
+        );
+        if (matched) {
+          setActiveEmployee(matched);
+          await StorageService.setActiveEmployee(matched);
+        }
+        await StorageService.recordLoginHistory(session.user);
+        const freshHistory = await StorageService.getLoginHistory();
+        setLoginHistory(freshHistory || []);
+      }
+
+      setIsProfileModalOpen(false);
+      showAlert('Berhasil', `Supervisor telah beralih ke akun ${targetUser.name}.`);
+    } catch (err) {
+      showAlert('Gagal Beralih', err.message || 'Gagal mengganti akun.');
+    }
   };
 
   const handleTransactionComplete = async (newTx) => {
@@ -239,53 +377,78 @@ export default function App() {
             activeShift={activeShift}
             onPressProfile={() => setIsProfileModalOpen(true)}
             onLogout={handleLogout}
+            isOnline={isOnline}
           />
 
       {/* Screen Views */}
       <View style={styles.screenContainer}>
-        {activeTab === 'KASIR' && (
-          <KasirScreen
-            products={products}
-            onUpdateProducts={setProducts}
-            activeEmployee={activeEmployee}
-            activeShift={activeShift}
-            storeInfo={storeInfo}
-            onTransactionComplete={handleTransactionComplete}
+        {!isOnline ? (
+          <ApiStateView
+            type="offline"
+            title="Tidak ada koneksi internet."
+            message="Periksa koneksi Anda dan coba lagi."
+            onRetry={async () => {
+              networkService.setSimulatedOffline(false);
+              const connected = await networkService.checkRealConnectivity();
+              if (!connected) {
+                showAlert('Status Jaringan', 'Perangkat masih dalam kondisi offline.');
+              } else {
+                showAlert('Terhubung', 'Koneksi internet berhasil dipulihkan!');
+              }
+            }}
+            retryLabel="Coba Lagi"
           />
-        )}
+        ) : (
+          <>
+            {activeTab === 'KASIR' && (
+              <KasirScreen
+                products={products}
+                onUpdateProducts={setProducts}
+                activeEmployee={activeEmployee}
+                activeShift={activeShift}
+                storeInfo={storeInfo}
+                onTransactionComplete={handleTransactionComplete}
+                isOnline={isOnline}
+              />
+            )}
 
-        {activeTab === 'MENU' && (
-          <MenuScreen
-            products={products}
-            onUpdateProducts={setProducts}
-          />
-        )}
+            {activeTab === 'MENU' && (
+              <MenuScreen
+                products={products}
+                onUpdateProducts={setProducts}
+              />
+            )}
 
-        {activeTab === 'SHIFT' && (
-          <ShiftScreen
-            activeShift={activeShift}
-            onUpdateActiveShift={setActiveShift}
-            activeEmployee={activeEmployee}
-            shiftHistory={shiftHistory}
-            onUpdateShiftHistory={setShiftHistory}
-          />
-        )}
+            {activeTab === 'SHIFT' && (
+              <ShiftScreen
+                activeShift={activeShift}
+                onUpdateActiveShift={setActiveShift}
+                activeEmployee={activeEmployee}
+                shiftHistory={shiftHistory}
+                onUpdateShiftHistory={setShiftHistory}
+                isOnline={isOnline}
+              />
+            )}
 
-        {activeTab === 'PRESENSI' && (
-          <PresensiScreen
-            activeEmployee={activeEmployee}
-            employees={employees}
-            onSelectEmployee={handleSelectEmployee}
-            attendanceList={attendanceList}
-            onUpdateAttendance={setAttendanceList}
-          />
-        )}
+            {activeTab === 'PRESENSI' && (
+              <PresensiScreen
+                activeEmployee={activeEmployee}
+                employees={employees}
+                onSelectEmployee={handleSelectEmployee}
+                attendanceList={attendanceList}
+                onUpdateAttendance={setAttendanceList}
+                isOnline={isOnline}
+              />
+            )}
 
-        {activeTab === 'RIWAYAT' && (
-          <RiwayatScreen
-            transactions={transactions}
-            storeInfo={storeInfo}
-          />
+            {activeTab === 'RIWAYAT' && (
+              <RiwayatScreen
+                transactions={transactions}
+                storeInfo={storeInfo}
+                isOnline={isOnline}
+              />
+            )}
+          </>
         )}
       </View>
 
@@ -395,68 +558,108 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Profile Switcher Modal */}
+      {/* Profile Switcher Modal (Histori Akun & Proteksi Password) */}
       <Modal visible={isProfileModalOpen} transparent animationType="fade">
         <View style={styles.profileModalOverlay}>
           <View style={styles.profileModalCard}>
             <View style={styles.profileModalHeader}>
               <View>
                 <Text style={styles.profileModalTitle}>Ganti Akun Kasir</Text>
-                <Text style={styles.profileModalSubtitle}>Pilih pekerja yang bertugas di kasir saat ini</Text>
+                <Text style={styles.profileModalSubtitle}>Histori akun yang pernah login pada perangkat ini</Text>
               </View>
               <TouchableOpacity onPress={() => setIsProfileModalOpen(false)}>
                 <Ionicons name="close" size={24} color={THEME.colors.textMuted} />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.profileEmpList}>
-              {employees.map((emp) => {
-                const isSelected = activeEmployee?.id === emp.id;
-                return (
-                  <TouchableOpacity
-                    key={emp.id}
-                    style={[styles.profileEmpOption, isSelected && styles.profileEmpOptionSelected]}
-                    onPress={() => handleSelectEmployee(emp)}
-                  >
-                    <View style={styles.profileEmpAvatar}>
-                      <Ionicons
-                        name="person"
-                        size={20}
-                        color={isSelected ? '#FFFFFF' : THEME.colors.primary}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        style={[
-                          styles.profileEmpName,
-                          isSelected && styles.profileEmpNameSelected,
-                        ]}
-                      >
-                        {emp.name}
-                      </Text>
-                      <Text style={styles.profileEmpRole}>{emp.role} • {emp.phone}</Text>
-                    </View>
-                    {isSelected && (
-                      <Ionicons name="checkmark-circle" size={22} color={THEME.colors.primary} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+            {/* Current Active Account Card */}
+            <View style={styles.currentAccountCard}>
+              <View style={styles.currentAccountAvatar}>
+                <Ionicons name="person" size={20} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.currentAccountName}>{activeEmployee?.name || authSession?.user?.name}</Text>
+                  <View style={styles.activePillBadge}>
+                    <Text style={styles.activePillText}>Sedang Aktif</Text>
+                  </View>
+                </View>
+                <Text style={styles.currentAccountRole}>{activeEmployee?.role || authSession?.user?.role}</Text>
+              </View>
             </View>
 
-            {/* Active Secure Session Card */}
-            {authSession?.user && (
-              <View style={styles.sessionBadgeCard}>
-                <View style={styles.sessionBadgeHeader}>
-                  <Ionicons name="shield-checkmark" size={15} color={THEME.colors.success} />
-                  <Text style={styles.sessionBadgeTitle}>Sesi Secure Storage Aktif</Text>
-                </View>
-                <Text style={styles.sessionBadgeUser}>
-                  Akun: {authSession.user.name} ({authSession.user.username || authSession.user.email})
-                </Text>
-                <Text style={styles.sessionBadgeRole}>Peran: {authSession.user.role}</Text>
-              </View>
-            )}
+            {/* History List of Previously Logged In Users */}
+            <View style={styles.historyListSection}>
+              <Text style={styles.historySectionTitle}>Pilih Akun untuk Beralih:</Text>
+              <Text style={styles.historySectionSubtitle}>
+                {isSupervisor
+                  ? 'Sebagai Supervisor, Anda memiliki akses bebas beralih akun.'
+                  : 'Pengguna lain wajib memasukkan kata sandi akun terkait.'}
+              </Text>
+
+              <ScrollView style={{ maxHeight: 220 }} showsVerticalScrollIndicator={false}>
+                {loginHistory.map((histUser) => {
+                  const isCurrent =
+                    (activeEmployee?.name && activeEmployee.name.toLowerCase() === histUser.name.toLowerCase()) ||
+                    (authSession?.user?.id && authSession.user.id === histUser.id);
+                  const isHistSupervisor = AuthService.isSupervisorRole(histUser.role);
+
+                  return (
+                    <TouchableOpacity
+                      key={histUser.id || histUser.username}
+                      style={[
+                        styles.profileEmpOption,
+                        isCurrent && styles.profileEmpOptionSelected,
+                      ]}
+                      onPress={() => handleInitiateSwitchAccount(histUser)}
+                      activeOpacity={0.7}
+                    >
+                      <View
+                        style={[
+                          styles.profileEmpAvatar,
+                          isCurrent && { backgroundColor: THEME.colors.primary },
+                        ]}
+                      >
+                        <Ionicons
+                          name={isHistSupervisor ? 'shield' : 'person'}
+                          size={18}
+                          color={isCurrent ? '#FFFFFF' : THEME.colors.primary}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            styles.profileEmpName,
+                            isCurrent && styles.profileEmpNameSelected,
+                          ]}
+                        >
+                          {histUser.name}
+                        </Text>
+                        <Text style={styles.profileEmpRole}>
+                          {histUser.role} • @{histUser.username}
+                        </Text>
+                      </View>
+                      {isCurrent ? (
+                        <View style={styles.activeCheckBadge}>
+                          <Ionicons name="checkmark-circle" size={20} color={THEME.colors.primary} />
+                        </View>
+                      ) : (
+                        <View style={styles.switchKeyBadge}>
+                          <Ionicons
+                            name={isSupervisor ? 'swap-horizontal' : 'lock-closed'}
+                            size={13}
+                            color={THEME.colors.primary}
+                          />
+                          <Text style={styles.switchKeyText}>
+                            {isSupervisor ? 'Beralih' : 'Sandi'}
+                          </Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
 
             {/* Logout Button */}
             <TouchableOpacity
@@ -467,6 +670,74 @@ export default function App() {
               <Ionicons name="log-out-outline" size={18} color={THEME.colors.danger} />
               <Text style={styles.modalLogoutText}>Keluar dari Akun (Logout)</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal Masukkan Sandi untuk Ganti Akun */}
+      <Modal visible={isSwitchPasswordModalOpen} transparent animationType="fade">
+        <View style={styles.passwordModalOverlay}>
+          <View style={styles.passwordModalCard}>
+            <View style={styles.passwordModalHeader}>
+              <View style={styles.passwordLockIcon}>
+                <Ionicons name="lock-closed" size={22} color={THEME.colors.primary} />
+              </View>
+              <Text style={styles.passwordModalTitle}>Verifikasi Kata Sandi</Text>
+              <Text style={styles.passwordModalSubtitle}>
+                Masukkan kata sandi untuk akun{' '}
+                <Text style={{ fontWeight: '800', color: THEME.colors.text }}>
+                  {switchAccountTarget?.name}
+                </Text>
+              </Text>
+            </View>
+
+            {switchPasswordError ? (
+              <View style={styles.passwordErrorBox}>
+                <Ionicons name="alert-circle" size={15} color={THEME.colors.danger} />
+                <Text style={styles.passwordErrorText}>{switchPasswordError}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.passwordInputWrapper}>
+              <Ionicons name="key-outline" size={18} color={THEME.colors.textMuted} />
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Kata sandi akun..."
+                placeholderTextColor={THEME.colors.textLight}
+                secureTextEntry
+                value={switchPasswordInput}
+                onChangeText={(t) => {
+                  setSwitchPasswordInput(t);
+                  setSwitchPasswordError('');
+                }}
+              />
+            </View>
+
+            <View style={styles.passwordModalActions}>
+              <TouchableOpacity
+                style={styles.passwordCancelBtn}
+                onPress={() => {
+                  setIsSwitchPasswordModalOpen(false);
+                  setSwitchPasswordInput('');
+                  setSwitchPasswordError('');
+                  setSwitchAccountTarget(null);
+                }}
+              >
+                <Text style={styles.passwordCancelText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.passwordSubmitBtn, isSwitching && styles.btnDisabled]}
+                onPress={handleConfirmSwitchWithPassword}
+                disabled={isSwitching}
+              >
+                {isSwitching ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.passwordSubmitText}>Masuk & Beralih</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -675,5 +946,190 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: THEME.colors.danger,
+  },
+  // Current Active Account in Profile Modal
+  currentAccountCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME.colors.primaryLight,
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    gap: 12,
+  },
+  currentAccountAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: THEME.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  currentAccountName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: THEME.colors.primaryDark,
+  },
+  currentAccountRole: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+    marginTop: 2,
+  },
+  activePillBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  activePillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  historyListSection: {
+    marginBottom: 10,
+  },
+  historySectionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: THEME.colors.text,
+    marginBottom: 2,
+  },
+  historySectionSubtitle: {
+    fontSize: 10,
+    color: THEME.colors.textMuted,
+    marginBottom: 10,
+    lineHeight: 14,
+  },
+  activeCheckBadge: {
+    marginLeft: 6,
+  },
+  switchKeyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  switchKeyText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.colors.primaryDark,
+  },
+  // Password Verification Modal
+  passwordModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  passwordModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 22,
+    ...THEME.shadows.lg,
+  },
+  passwordModalHeader: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  passwordLockIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: THEME.colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  passwordModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: THEME.colors.text,
+    marginBottom: 4,
+  },
+  passwordModalSubtitle: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
+    textAlign: 'center',
+  },
+  passwordErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEE2E2',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  passwordErrorText: {
+    fontSize: 11,
+    color: THEME.colors.danger,
+    fontWeight: '700',
+    flex: 1,
+  },
+  passwordInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 12,
+    marginBottom: 18,
+    gap: 10,
+  },
+  passwordInput: {
+    flex: 1,
+    height: 44,
+    fontSize: 13,
+    color: THEME.colors.text,
+  },
+  passwordModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  passwordCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  passwordCancelText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.textMuted,
+  },
+  passwordSubmitBtn: {
+    flex: 1.5,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: THEME.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...THEME.shadows.sm,
+  },
+  passwordSubmitText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  btnDisabled: {
+    opacity: 0.6,
   },
 });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,14 +10,30 @@ import {
   Switch,
   Platform,
   KeyboardAvoidingView,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { INITIAL_CATEGORIES } from '../constants/initialData';
 import { StorageService } from '../services/storage';
+import { ApiClient } from '../services/api';
+import { networkService } from '../services/network';
 import { showAlert } from '../utils/alert';
+import ApiStateView from '../components/ApiStateView';
 
-export default function MenuScreen({ products, onUpdateProducts }) {
+export default function MenuScreen({ products = [], onUpdateProducts }) {
+  // --- State Manajemen Siklus API (Sesuai Kurikulum Sprint 05) ---
+  // Status: 'idle' | 'loading' | 'retrying' | 'success' | 'error' | 'empty'
+  const [apiStatus, setApiStatus] = useState('loading');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorDetails, setErrorDetails] = useState({
+    type: 'generic',
+    status: 0,
+    title: '',
+    message: '',
+  });
+
+  // UI Filter & Modal State
   const [selectedCategory, setSelectedCategory] = useState('Semua');
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -32,6 +48,78 @@ export default function MenuScreen({ products, onUpdateProducts }) {
   const [description, setDescription] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
 
+  /**
+   * IMPLEMENTASI ALUR API ALAMI (TASK 01, 02, 03 & SPRINT 05):
+   * 1. setLoading(true) & setError(null) -> Tampilkan Loading State ("Memuat data...")
+   * 2. Panggil API dengan timeout controller & deteksi koneksi nyata
+   * 3. Periksa response.ok & HTTP status code (2xx, 4xx, 5xx)
+   * 4. Jika sukses -> Simpan & tampilkan data (Success State)
+   * 5. Jika gagal / offline / timeout -> Tangkap di catch & tampilkan pesan error spesifik
+   * 6. Sediakan tombol "Coba Lagi" (Retry Mechanism)
+   */
+  const loadProducts = useCallback(
+    async (isRetry = false) => {
+      if (isRetry) {
+        setApiStatus('retrying');
+      } else {
+        setApiStatus('loading');
+      }
+
+      setErrorDetails({ type: 'generic', status: 0, title: '', message: '' });
+
+      try {
+        // Ambil data produk melalui ApiClient (menangani status code, timeout 4s, dan offline check)
+        const data = await ApiClient.fetchProductsWithHandling({
+          timeoutMs: 4000,
+        });
+
+        if (Array.isArray(data) && data.length === 0) {
+          // Sprint 05 Item 7: Empty State (Kondisi saat belum ada menu)
+          setApiStatus('empty');
+          onUpdateProducts([]);
+        } else {
+          // Sprint 05 Item 1: HTTP 2xx Success State
+          setApiStatus('success');
+          onUpdateProducts(data || []);
+        }
+      } catch (err) {
+        console.log('API Error:', err);
+        // Tangkap & Klasifikasi Error (Task 01, Task 02, Task 03)
+        setErrorDetails({
+          type: err.type || 'generic',
+          status: err.status || 0,
+          title: err.title || 'Gagal Mengambil Data',
+          message: err.friendlyMessage || err.message || 'Terjadi kesalahan pada sistem.',
+        });
+        setApiStatus('error');
+      } finally {
+        setIsRefreshing(false);
+      }
+    },
+    [onUpdateProducts]
+  );
+
+  // Initial Fetch pada saat pertama kali layar dibuka
+  useEffect(() => {
+    loadProducts(false);
+  }, [loadProducts]);
+
+  // Handler Tombol "Coba Lagi" (Retry Mechanism - Task 02 & Task 03)
+  const handleRetry = async () => {
+    // Jika sebelumnya error karena offline, cek konektivitas internet nyata terlebih dahulu
+    if (errorDetails.type === 'offline') {
+      await networkService.checkRealConnectivity();
+    }
+    loadProducts(true);
+  };
+
+  // Pull to refresh handler (Tarik ke bawah untuk memuat ulang data)
+  const handlePullRefresh = () => {
+    setIsRefreshing(true);
+    loadProducts(false);
+  };
+
+  // Form CRUD methods
   const resetForm = () => {
     setName('');
     setCategory('Makanan');
@@ -71,7 +159,8 @@ export default function MenuScreen({ products, onUpdateProducts }) {
       return;
     }
 
-    const stockNum = parseInt(stock.replace(/[^0-9]/g, ''), 10) || 0;
+    const rawStock = parseInt(stock.replace(/[^0-9]/g, ''), 10) || 0;
+    const stockNum = isAvailable ? rawStock : 0;
     const costNum = parseInt(cost.replace(/[^0-9]/g, ''), 10) || 0;
 
     let updatedList;
@@ -123,6 +212,9 @@ export default function MenuScreen({ products, onUpdateProducts }) {
             const updated = products.filter((p) => p.id !== productId);
             await StorageService.saveProducts(updated);
             onUpdateProducts(updated);
+            if (updated.length === 0) {
+              setApiStatus('empty');
+            }
           },
         },
       ]
@@ -130,146 +222,220 @@ export default function MenuScreen({ products, onUpdateProducts }) {
   };
 
   const handleToggleStock = async (product) => {
-    const updated = products.map((p) =>
-      p.id === product.id ? { ...p, isAvailable: !p.isAvailable } : p
-    );
+    const nextAvailable = !product.isAvailable;
+    const updated = products.map((p) => {
+      if (p.id === product.id) {
+        return {
+          ...p,
+          isAvailable: nextAvailable,
+          stock: nextAvailable ? (p.stock > 0 ? p.stock : 20) : 0,
+        };
+      }
+      return p;
+    });
     await StorageService.saveProducts(updated);
     onUpdateProducts(updated);
   };
 
-  const filteredProducts = products.filter((p) => {
+  const filteredProducts = (products || []).filter((p) => {
     const matchCat = selectedCategory === 'Semua' || p.category === selectedCategory;
     const matchSearch =
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchQuery.toLowerCase());
+      p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.category?.toLowerCase().includes(searchQuery.toLowerCase());
     return matchCat && matchSearch;
   });
 
   return (
     <View style={styles.container}>
-      {/* Top Search & Filter */}
-      <View style={styles.topFilterSection}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search-outline" size={18} color={THEME.colors.textMuted} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Cari menu & harga..."
-            placeholderTextColor={THEME.colors.textLight}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-        </View>
+      {/* 1. Kondisi Loading & Retrying State (Task 02) */}
+      {(apiStatus === 'loading' || apiStatus === 'retrying') && (
+        <ApiStateView
+          type={apiStatus}
+          isOfflineRetry={errorDetails.type === 'offline'}
+        />
+      )}
 
-        {/* Categories Bar */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryScroll}
-        >
-          {INITIAL_CATEGORIES.map((cat) => {
-            const isSelected = selectedCategory === cat;
-            return (
-              <TouchableOpacity
-                key={cat}
-                style={[styles.categoryPill, isSelected && styles.categoryPillActive]}
-                onPress={() => setSelectedCategory(cat)}
-              >
-                <Text
-                  style={[
-                    styles.categoryPillText,
-                    isSelected && styles.categoryPillTextActive,
-                  ]}
-                >
-                  {cat}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
+      {/* 2. Kondisi Error State (Task 01, Task 02, Task 03, Sprint 05) */}
+      {apiStatus === 'error' && (
+        <ApiStateView
+          type={errorDetails.type}
+          title={errorDetails.title}
+          message={errorDetails.message}
+          onRetry={handleRetry}
+          retryLabel="Coba Lagi"
+        />
+      )}
 
-      {/* Product List */}
-      <ScrollView
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.listHeaderRow}>
-          <Text style={styles.listTitle}>
-            Daftar Produk ({filteredProducts.length} Menu)
-          </Text>
-          <TouchableOpacity style={styles.addMenuBtn} onPress={openAddModal}>
-            <Ionicons name="add" size={18} color="#FFFFFF" />
-            <Text style={styles.addMenuBtnText}>Tambah Menu</Text>
-          </TouchableOpacity>
-        </View>
+      {/* 3. Kondisi Empty State (Sprint 05 Item 7: Belum Ada Data) */}
+      {apiStatus === 'empty' && (
+        <ApiStateView
+          type="empty"
+          title="Belum ada data"
+          message="Saat ini belum ada menu atau produk yang tersedia."
+          onRetry={async () => {
+            // Pulihkan menu bawaan jika data sempat terhapus semua
+            await StorageService.init();
+            loadProducts(true);
+          }}
+          retryLabel="Muat Menu Bawaan"
+        />
+      )}
 
-        {filteredProducts.map((prod) => (
-          <View key={prod.id} style={styles.menuItemCard}>
-            <View style={styles.menuItemLeft}>
-              <View style={styles.menuItemHeader}>
-                <Text style={styles.menuItemCategory}>{prod.category}</Text>
-                <Text
-                  style={[
-                    styles.menuItemStockBadge,
-                    prod.stock <= 5 ? styles.stockLow : styles.stockNormal,
-                  ]}
-                >
-                  Stok: {prod.stock}
-                </Text>
-              </View>
-
-              <Text style={styles.menuItemName}>{prod.name}</Text>
-              {prod.description ? (
-                <Text style={styles.menuItemDesc} numberOfLines={1}>
-                  {prod.description}
-                </Text>
-              ) : null}
-
-              <View style={styles.priceRow}>
-                <Text style={styles.menuItemPrice}>
-                  {StorageService.formatIDR(prod.price)}
-                </Text>
-                {prod.cost > 0 && (
-                  <Text style={styles.menuItemCost}>
-                    (Modal: {StorageService.formatIDR(prod.cost)})
-                  </Text>
-                )}
-              </View>
+      {/* 4. Kondisi Sukses (2xx): Tampilkan Katalog & Daftar Menu */}
+      {apiStatus === 'success' && (
+        <>
+          {/* Top Search & Filter Bar */}
+          <View style={styles.topFilterSection}>
+            <View style={styles.searchBar}>
+              <Ionicons name="search-outline" size={18} color={THEME.colors.textMuted} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Cari menu & harga..."
+                placeholderTextColor={THEME.colors.textLight}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
             </View>
 
-            <View style={styles.menuItemRight}>
-              <View style={styles.switchWrapper}>
-                <Text style={styles.switchLabel}>
-                  {prod.isAvailable ? 'Tersedia' : 'Habis'}
-                </Text>
-                <Switch
-                  value={prod.isAvailable}
-                  onValueChange={() => handleToggleStock(prod)}
-                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-                  thumbColor={prod.isAvailable ? THEME.colors.primary : '#F1F5F9'}
-                />
-              </View>
-
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={styles.iconBtn}
-                  onPress={() => openEditModal(prod)}
-                >
-                  <Ionicons name="create-outline" size={18} color={THEME.colors.primary} />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.iconBtn, styles.deleteBtn]}
-                  onPress={() => handleDeleteProduct(prod.id, prod.name)}
-                >
-                  <Ionicons name="trash-outline" size={18} color={THEME.colors.danger} />
-                </TouchableOpacity>
-              </View>
-            </View>
+            {/* Categories Bar */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.categoryScroll}
+            >
+              {INITIAL_CATEGORIES.map((cat) => {
+                const isSelected = selectedCategory === cat;
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[styles.categoryPill, isSelected && styles.categoryPillActive]}
+                    onPress={() => setSelectedCategory(cat)}
+                  >
+                    <Text
+                      style={[
+                        styles.categoryPillText,
+                        isSelected && styles.categoryPillTextActive,
+                      ]}
+                    >
+                      {cat}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </View>
-        ))}
-      </ScrollView>
+
+          {/* Product List */}
+          <ScrollView
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={handlePullRefresh}
+                colors={[THEME.colors.primary]}
+                tintColor={THEME.colors.primary}
+              />
+            }
+          >
+            <View style={styles.listHeaderRow}>
+              <Text style={styles.listTitle}>
+                Daftar Menu ({filteredProducts.length} Produk)
+              </Text>
+
+              <TouchableOpacity style={styles.addMenuBtn} onPress={openAddModal}>
+                <Ionicons name="add" size={18} color="#FFFFFF" />
+                <Text style={styles.addMenuBtnText}>Tambah Menu</Text>
+              </TouchableOpacity>
+            </View>
+
+            {filteredProducts.map((prod) => (
+              <View key={prod.id} style={styles.menuItemCard}>
+                <View style={styles.menuItemLeft}>
+                  <View style={styles.menuItemHeader}>
+                    <Text style={styles.menuItemCategory}>{prod.category}</Text>
+                    <Text
+                      style={[
+                        styles.menuItemStockBadge,
+                        prod.stock <= 5 ? styles.stockLow : styles.stockNormal,
+                      ]}
+                    >
+                      Stok: {prod.stock}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.menuItemName}>{prod.name}</Text>
+                  {prod.description ? (
+                    <Text style={styles.menuItemDesc} numberOfLines={1}>
+                      {prod.description}
+                    </Text>
+                  ) : null}
+
+                  <View style={styles.priceRow}>
+                    <Text style={styles.menuItemPrice}>
+                      {StorageService.formatIDR(prod.price)}
+                    </Text>
+                    {prod.cost > 0 && (
+                      <Text style={styles.menuItemCost}>
+                        (Modal: {StorageService.formatIDR(prod.cost)})
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                <View style={styles.menuItemRight}>
+                  <View style={styles.switchWrapper}>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        prod.isAvailable ? styles.statusBadgeAvailable : styles.statusBadgeHabis,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.switchLabel,
+                          prod.isAvailable ? styles.switchLabelAvailable : styles.switchLabelHabis,
+                        ]}
+                      >
+                        {prod.isAvailable ? 'Tersedia' : 'Habis'}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={prod.isAvailable}
+                      onValueChange={() => handleToggleStock(prod)}
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={prod.isAvailable ? THEME.colors.primary : '#F1F5F9'}
+                      style={Platform.select({
+                        web: { transform: [{ scale: 0.82 }], cursor: 'pointer', marginVertical: 2 },
+                        ios: { transform: [{ scale: 0.78 }], marginVertical: 2 },
+                        android: { transform: [{ scale: 0.88 }], marginVertical: 1 },
+                        default: { marginVertical: 2 },
+                      })}
+                    />
+                  </View>
+
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={styles.iconBtn}
+                      onPress={() => openEditModal(prod)}
+                    >
+                      <Ionicons name="create-outline" size={18} color={THEME.colors.primary} />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.iconBtn, styles.deleteBtn]}
+                      onPress={() => handleDeleteProduct(prod.id, prod.name)}
+                    >
+                      <Ionicons name="trash-outline" size={18} color={THEME.colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </>
+      )}
 
       {/* Add / Edit Modal */}
       <Modal visible={isModalOpen} transparent animationType="slide">
@@ -365,7 +531,10 @@ export default function MenuScreen({ products, onUpdateProducts }) {
                 <Text style={styles.inputLabel}>Status Menu Aktif</Text>
                 <Switch
                   value={isAvailable}
-                  onValueChange={setIsAvailable}
+                  onValueChange={(val) => {
+                    setIsAvailable(val);
+                    if (!val) setStock('0');
+                  }}
                   trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
                   thumbColor={isAvailable ? THEME.colors.primary : '#F1F5F9'}
                 />
@@ -548,29 +717,45 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   switchWrapper: {
-    alignItems: 'center',
+    alignItems: 'flex-end',
+    marginBottom: 8,
+  },
+  statusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginBottom: 2,
+  },
+  statusBadgeAvailable: {
+    backgroundColor: '#ECFDF5',
+  },
+  statusBadgeHabis: {
+    backgroundColor: '#FEF2F2',
   },
   switchLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
-    color: THEME.colors.textMuted,
-    marginBottom: -4,
+  },
+  switchLabelAvailable: {
+    color: '#059669',
+  },
+  switchLabelHabis: {
+    color: '#DC2626',
   },
   actionRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 8,
   },
   iconBtn: {
     width: 32,
     height: 32,
     borderRadius: 8,
-    backgroundColor: THEME.colors.primaryLight,
-    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
     justifyContent: 'center',
+    alignItems: 'center',
   },
   deleteBtn: {
-    backgroundColor: THEME.colors.dangerLight,
+    backgroundColor: '#FEF2F2',
   },
   modalOverlay: {
     flex: 1,

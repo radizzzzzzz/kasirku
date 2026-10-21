@@ -10,6 +10,7 @@ export default function Header({
   onLogout,
   title = 'KasirKu',
   subtitle,
+  isOnline = true,
 }) {
   return (
     <View style={styles.container}>
@@ -35,8 +36,17 @@ export default function Header({
               onPress={onPressProfile}
               activeOpacity={0.7}
             >
-              <View style={styles.avatar}>
-                <Ionicons name="person" size={14} color={THEME.colors.primary} />
+              <View style={styles.avatarContainer}>
+                <View style={styles.avatar}>
+                  <Ionicons name="person" size={14} color={THEME.colors.primary} />
+                </View>
+                {/* Simbol Bulat Status: Hijau saat online, Merah saat offline */}
+                <View
+                  style={[
+                    styles.profileStatusDot,
+                    isOnline ? styles.dotGreen : styles.dotRed,
+                  ]}
+                />
               </View>
               <View style={styles.employeeInfo}>
                 <Text style={styles.employeeName} numberOfLines={1}>
@@ -102,6 +112,11 @@ const styles = StyleSheet.create({
     marginRight: 10,
     flexShrink: 0,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   brandTitle: {
     fontSize: 16,
     fontWeight: '800',
@@ -128,6 +143,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     maxWidth: 135,
   },
+  avatarContainer: {
+    position: 'relative',
+    marginRight: 6,
+  },
   avatar: {
     width: 22,
     height: 22,
@@ -135,8 +154,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 6,
     flexShrink: 0,
+  },
+  profileStatusDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  dotGreen: {
+    backgroundColor: '#10B981',
+  },
+  dotRed: {
+    backgroundColor: '#EF4444',
   },
   employeeInfo: {
     marginRight: 4,

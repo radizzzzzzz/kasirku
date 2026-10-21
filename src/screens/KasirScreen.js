@@ -6,24 +6,28 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { INITIAL_CATEGORIES } from '../constants/initialData';
 import { StorageService } from '../services/storage';
+import { ApiClient } from '../services/api';
 import { showAlert } from '../utils/alert';
 import ProductCard from '../components/ProductCard';
 import CartModal from '../components/CartModal';
 import PaymentModal from '../components/PaymentModal';
 import ReceiptModal from '../components/ReceiptModal';
+import ApiStateView from '../components/ApiStateView';
 
 export default function KasirScreen({
-  products,
+  products = [],
   onUpdateProducts,
   activeEmployee,
   activeShift,
   storeInfo,
   onTransactionComplete,
+  isOnline = true,
 }) {
   const [selectedCategory, setSelectedCategory] = useState('Semua');
   const [searchQuery, setSearchQuery] = useState('');
@@ -32,6 +36,22 @@ export default function KasirScreen({
   const [isPaymentVisible, setIsPaymentVisible] = useState(false);
   const [isReceiptVisible, setIsReceiptVisible] = useState(false);
   const [lastTransaction, setLastTransaction] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Pull-to-refresh handler
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const fresh = await ApiClient.fetchProductsWithHandling();
+      if (fresh && Array.isArray(fresh)) {
+        onUpdateProducts(fresh);
+      }
+    } catch (e) {
+      console.warn('Kasir refresh error:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Cart operations
   const handleAddToCart = (product) => {
@@ -181,7 +201,6 @@ export default function KasirScreen({
             </TouchableOpacity>
           )}
         </View>
-
         {/* Categories Bar */}
         <ScrollView
           horizontal
@@ -210,24 +229,45 @@ export default function KasirScreen({
         </ScrollView>
       </View>
 
-      {/* Product List */}
-      <ScrollView
-        style={styles.productList}
-        contentContainerStyle={[
-          styles.productListContent,
-          cart.length > 0 && { paddingBottom: 110 },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {filteredProducts.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="search" size={48} color={THEME.colors.textLight} />
-            <Text style={styles.emptyTitle}>Menu Tidak Ditemukan</Text>
-            <Text style={styles.emptySubtitle}>
-              Coba gunakan kata kunci lain atau pilih kategori berbeda.
-            </Text>
-          </View>
-        ) : (
+      {/* Product List or Empty State */}
+      {products.length === 0 ? (
+        <ApiStateView
+          type="empty"
+          title="Belum Ada Menu Kasir"
+          message="Saat ini belum ada menu atau produk yang tersedia untuk dijual."
+          onRetry={async () => {
+            await StorageService.init();
+            const defaultProds = await StorageService.getProducts();
+            onUpdateProducts(defaultProds || []);
+          }}
+          retryLabel="Muat Menu Bawaan"
+        />
+      ) : (
+        <ScrollView
+          style={styles.productList}
+          contentContainerStyle={[
+            styles.productListContent,
+            cart.length > 0 && { paddingBottom: 110 },
+          ]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              colors={[THEME.colors.primary]}
+              tintColor={THEME.colors.primary}
+            />
+          }
+        >
+          {filteredProducts.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="search" size={48} color={THEME.colors.textLight} />
+              <Text style={styles.emptyTitle}>Menu Tidak Ditemukan</Text>
+              <Text style={styles.emptySubtitle}>
+                Coba gunakan kata kunci lain atau pilih kategori berbeda.
+              </Text>
+            </View>
+          ) : (
           filteredProducts.map((prod) => {
             const inCart = cart.find((item) => item.id === prod.id);
             return (
@@ -242,6 +282,7 @@ export default function KasirScreen({
           })
         )}
       </ScrollView>
+      )}
 
       {/* Floating Bottom Cart Bar */}
       {cart.length > 0 && (

@@ -9,22 +9,26 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { AuthService } from '../services/secureStorage';
 import { StorageService } from '../services/storage';
+import { ApiClient } from '../services/api';
 
 export default function AuthScreen({ onLoginSuccess }) {
   const [authMode, setAuthMode] = useState('LOGIN'); // 'LOGIN' | 'REGISTER'
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [tokenSuccessModal, setTokenSuccessModal] = useState(null); // Modal Demo Slide 5 (Token Diterima & Disimpan)
 
   // Login form state
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
 
   // Register form state
@@ -34,21 +38,26 @@ export default function AuthScreen({ onLoginSuccess }) {
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [regRole, setRegRole] = useState('Kasir & Barista');
-  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [loginHistory, setLoginHistory] = useState([]);
 
-  // Check remembered user on mount
+  // Check remembered user and login history on mount
   useEffect(() => {
-    async function checkRemembered() {
+    async function initAuth() {
       try {
+        const history = await StorageService.getLoginHistory();
+        setLoginHistory(history || []);
+
         const remembered = await AuthService.getRememberedUser();
         if (remembered && remembered.identifier) {
           setLoginIdentifier(remembered.identifier);
+        } else if (history && history.length > 0) {
+          setLoginIdentifier(history[0].username || history[0].email);
         }
       } catch (e) {
-        console.warn('Error reading remembered user:', e);
+        console.warn('Error loading login history:', e);
       }
     }
-    checkRemembered();
+    initAuth();
   }, []);
 
   const handleLogin = async (overrideIdentifier, overridePassword) => {
@@ -69,7 +78,8 @@ export default function AuthScreen({ onLoginSuccess }) {
 
     setIsLoading(true);
     try {
-      const session = await AuthService.login(idToUse, passToUse, rememberMe);
+      // Login via ApiClient -> triggers console [2], [3], [4] and stores access_token in SecureStore
+      const { session } = await ApiClient.login(idToUse, passToUse);
       
       // Also sync active employee with the logged in user
       const employees = await StorageService.getEmployees();
@@ -92,9 +102,17 @@ export default function AuthScreen({ onLoginSuccess }) {
 
       await StorageService.setActiveEmployee(matchedEmp);
 
-      if (onLoginSuccess) {
-        onLoginSuccess(session, matchedEmp);
-      }
+      // Record to login history
+      await StorageService.recordLoginHistory(session.user);
+      const updatedHistory = await StorageService.getLoginHistory();
+      setLoginHistory(updatedHistory || []);
+
+      // Tampilkan popup "Login Berhasil" sederhana tanpa detail token
+      setTokenSuccessModal({
+        session,
+        matchedEmp,
+        user: session.user,
+      });
     } catch (err) {
       setErrorMessage(err.message || 'Gagal masuk. Periksa kembali akun Anda.');
     } finally {
@@ -148,12 +166,17 @@ export default function AuthScreen({ onLoginSuccess }) {
       await StorageService.addEmployee(newEmp);
       await StorageService.setActiveEmployee(newEmp);
 
-      setSuccessMessage('Pendaftaran berhasil! Mengalihkan...');
-      setTimeout(() => {
-        if (onLoginSuccess) {
-          onLoginSuccess(session, newEmp);
-        }
-      }, 500);
+      // Record to login history
+      await StorageService.recordLoginHistory(session.user);
+      const updatedHistory = await StorageService.getLoginHistory();
+      setLoginHistory(updatedHistory || []);
+
+      // Tampilkan popup "Login Berhasil" sederhana
+      setTokenSuccessModal({
+        session,
+        matchedEmp: newEmp,
+        user: session.user,
+      });
     } catch (err) {
       setErrorMessage(err.message || 'Pendaftaran gagal. Silakan coba lagi.');
     } finally {
@@ -187,18 +210,6 @@ export default function AuthScreen({ onLoginSuccess }) {
           <Text style={styles.brandTagline}>
             Point of Sales, Shift & Presensi Karyawan
           </Text>
-
-          {/* Security & Storage Architecture Badges */}
-          <View style={styles.securityPillsRow}>
-            <View style={styles.securityPill}>
-              <Ionicons name="shield-checkmark" size={13} color={THEME.colors.success} />
-              <Text style={styles.securityPillText}>Secure Storage (Keystore)</Text>
-            </View>
-            <View style={styles.securityPill}>
-              <Ionicons name="file-tray-full" size={13} color={THEME.colors.primary} />
-              <Text style={styles.securityPillText}>Local Storage (AsyncStorage)</Text>
-            </View>
-          </View>
         </View>
 
         {/* Main Card Container */}
@@ -368,64 +379,63 @@ export default function AuthScreen({ onLoginSuccess }) {
                 )}
               </TouchableOpacity>
 
-              {/* Quick Preset Login Chips (Great for testing) */}
-              <View style={styles.quickAccessSection}>
-                <View style={styles.dividerRow}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>AKUN DEMO CEPAT</Text>
-                  <View style={styles.dividerLine} />
+              {/* History Login User (Pilih user lalu masukkan sandi) */}
+              {loginHistory.length > 0 && (
+                <View style={styles.quickAccessSection}>
+                  <View style={styles.dividerRow}>
+                    <View style={styles.dividerLine} />
+                    <Text style={styles.dividerText}>HISTORI AKUN LOGIN</Text>
+                    <View style={styles.dividerLine} />
+                  </View>
+                  <Text style={styles.quickSubtitle}>
+                    Pilih akun Anda di bawah, lalu masukkan kata sandi:
+                  </Text>
+
+                  <View style={styles.chipGrid}>
+                    {loginHistory.slice(0, 3).map((item) => {
+                      const isSelected =
+                        loginIdentifier.toLowerCase() === (item.username || '').toLowerCase() ||
+                        loginIdentifier.toLowerCase() === (item.email || '').toLowerCase();
+                      const initials = (item.name || 'User')
+                        .split(' ')
+                        .map((n) => n[0])
+                        .join('')
+                        .substring(0, 2)
+                        .toUpperCase();
+
+                      return (
+                        <TouchableOpacity
+                          key={item.id || item.username}
+                          style={[styles.demoChip, isSelected && styles.demoChipSelected]}
+                          onPress={() => {
+                            setLoginIdentifier(item.username || item.email);
+                            setLoginPassword('');
+                            setErrorMessage('');
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[styles.chipAvatar, isSelected && styles.chipAvatarSelected]}>
+                            <Text style={[styles.chipAvatarText, isSelected && styles.chipAvatarTextSelected]}>
+                              {initials}
+                            </Text>
+                          </View>
+                          <View style={styles.chipDetails}>
+                            <Text style={[styles.chipName, isSelected && styles.chipNameSelected]}>
+                              {item.name}
+                            </Text>
+                            <Text style={styles.chipRole}>{item.role}</Text>
+                          </View>
+                          <Ionicons
+                            name={isSelected ? 'checkmark-circle' : 'chevron-forward'}
+                            size={16}
+                            color={isSelected ? THEME.colors.primary : THEME.colors.textLight}
+                          />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 </View>
-                <Text style={styles.quickSubtitle}>
-                  Klik salah satu akun bawaan berikut untuk langsung masuk:
-                </Text>
-
-                <View style={styles.chipGrid}>
-                  <TouchableOpacity
-                    style={styles.demoChip}
-                    onPress={() => handleQuickLogin('syauqi', 'password123')}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.chipAvatar}>
-                      <Text style={styles.chipAvatarText}>SI</Text>
-                    </View>
-                    <View style={styles.chipDetails}>
-                      <Text style={styles.chipName}>Syauqi Iwan</Text>
-                      <Text style={styles.chipRole}>Kasir & Barista</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={14} color={THEME.colors.primary} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.demoChip}
-                    onPress={() => handleQuickLogin('admin', 'admin123')}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.chipAvatar, { backgroundColor: '#F3E8FF' }]}>
-                      <Text style={[styles.chipAvatarText, { color: '#7E22CE' }]}>AD</Text>
-                    </View>
-                    <View style={styles.chipDetails}>
-                      <Text style={styles.chipName}>Administrator</Text>
-                      <Text style={styles.chipRole}>Supervisor & Toko</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={14} color={THEME.colors.primary} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.demoChip}
-                    onPress={() => handleQuickLogin('siti', 'password123')}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.chipAvatar, { backgroundColor: '#ECFDF5' }]}>
-                      <Text style={[styles.chipAvatarText, { color: '#047857' }]}>SR</Text>
-                    </View>
-                    <View style={styles.chipDetails}>
-                      <Text style={styles.chipName}>Siti Rahma</Text>
-                      <Text style={styles.chipRole}>Kasir & Kitchen</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={14} color={THEME.colors.primary} />
-                  </TouchableOpacity>
-                </View>
-              </View>
+              )}
             </View>
           ) : (
             /* REGISTER FORM */
@@ -595,31 +605,37 @@ export default function AuthScreen({ onLoginSuccess }) {
             </View>
           )}
         </View>
+      </ScrollView>
 
-        {/* Security & Local Storage Explanatory Box */}
-        <View style={styles.infoBox}>
-          <Text style={styles.infoBoxTitle}>Arsitektur Penyimpanan KasirKu</Text>
-          <View style={styles.infoRow}>
-            <Ionicons name="key" size={16} color={THEME.colors.primary} style={{ marginTop: 2 }} />
-            <Text style={styles.infoRowText}>
-              <Text style={{ fontWeight: '800', color: THEME.colors.text }}>Secure Storage: </Text>
-              Menyimpan session token, password, dan kredensial terenkripsi dengan aman (Hardware Keystore / Keychain).
+      {/* Modal: Login Berhasil (Sederhana & Bersih) */}
+      <Modal visible={!!tokenSuccessModal} transparent animationType="fade">
+        <View style={styles.tokenModalOverlay}>
+          <View style={styles.tokenModalCard}>
+            <View style={styles.tokenSuccessIcon}>
+              <Ionicons name="checkmark-circle" size={56} color={THEME.colors.success} />
+            </View>
+            <Text style={styles.tokenModalTitle}>Login Berhasil</Text>
+            <Text style={styles.tokenModalSubtitle}>
+              Selamat datang kembali, {tokenSuccessModal?.user?.name || 'Kasir'}!
             </Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Ionicons
-              name="server"
-              size={16}
-              color={THEME.colors.secondary}
-              style={{ marginTop: 2 }}
-            />
-            <Text style={styles.infoRowText}>
-              <Text style={{ fontWeight: '800', color: THEME.colors.text }}>Local Storage: </Text>
-              Menyimpan katalog menu, transaksi offline, log shift, dan data operasional toko dengan AsyncStorage.
-            </Text>
+
+            <TouchableOpacity
+              style={styles.tokenModalBtn}
+              onPress={() => {
+                const { session, matchedEmp } = tokenSuccessModal;
+                setTokenSuccessModal(null);
+                if (onLoginSuccess) {
+                  onLoginSuccess(session, matchedEmp);
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.tokenModalBtnText}>Lanjut ke Kasir</Text>
+              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" style={{ marginLeft: 6 }} />
+            </TouchableOpacity>
           </View>
         </View>
-      </ScrollView>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -871,6 +887,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 12,
   },
+  demoChipSelected: {
+    backgroundColor: '#EFF6FF',
+    borderColor: THEME.colors.primary,
+  },
   chipAvatar: {
     width: 32,
     height: 32,
@@ -879,6 +899,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
+  },
+  chipAvatarSelected: {
+    backgroundColor: THEME.colors.primary,
+  },
+  chipAvatarTextSelected: {
+    color: '#FFFFFF',
+  },
+  chipNameSelected: {
+    color: THEME.colors.primaryDark,
   },
   chipAvatarText: {
     fontSize: 11,
@@ -950,5 +979,97 @@ const styles = StyleSheet.create({
     color: THEME.colors.textMuted,
     flex: 1,
     lineHeight: 16,
+  },
+  // Token Success Modal Styles (Demo Slide 5 Step 3)
+  tokenModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  tokenModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    ...THEME.shadows.lg,
+  },
+  tokenSuccessIcon: {
+    marginBottom: 12,
+  },
+  tokenModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: THEME.colors.text,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  tokenModalSubtitle: {
+    fontSize: 13,
+    color: THEME.colors.textMuted,
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  tokenBox: {
+    width: '100%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginBottom: 20,
+  },
+  tokenBoxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  tokenBoxTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME.colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  tokenBoxContent: {
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: '#0F172A',
+    backgroundColor: '#FFFFFF',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    lineHeight: 15,
+  },
+  tokenBoxMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  tokenBoxFooter: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: THEME.colors.success,
+  },
+  tokenModalBtn: {
+    width: '100%',
+    backgroundColor: THEME.colors.primary,
+    paddingVertical: 14,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...THEME.shadows.sm,
+  },
+  tokenModalBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
   },
 });

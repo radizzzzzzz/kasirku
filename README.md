@@ -89,26 +89,105 @@ try_mobile/
 │   │   ├── initialData.js   # Data awal produk, pekerja, info toko
 │   │   └── theme.js         # Sistem warna, tipografi, bayangan (shadow)
 │   ├── services/
-│   │   ├── storage.js       # Local Storage (AsyncStorage) untuk data transaksi, katalog, shift
-│   │   └── secureStorage.js # Secure Storage (Hardware Keystore/Keychain) untuk auth & password
+│   │   ├── jwt.js           # Generator & Verifikator standar JWT (Header.Payload.Signature)
+│   │   ├── api.js           # API Service, Client interceptor, & Protected Endpoint
+│   │   ├── storage.js       # Local Storage (AsyncStorage) untuk operasional offline
+│   │   └── secureStorage.js # Secure Storage (Hardware Keystore/Keychain) untuk access_token
 │   ├── components/
 │   │   ├── Header.js        # Header atas dengan profil kasir, logout & status shift
 │   │   ├── ProductCard.js   # Kartu produk dengan kontrol jumlah & stok
 │   │   ├── CartModal.js     # Drawer keranjang pesanan
 │   │   ├── PaymentModal.js  # Modal pembayaran Tunai & QRIS
 │   │   └── ReceiptModal.js  # Modal Nota Digital + Fitur Share
-│   └── screens/
-│       ├── AuthScreen.js    # Layar Autentikasi (Login & Registrasi User)
-│       ├── KasirScreen.js   # Layar Kasir POS utama
-│       ├── MenuScreen.js    # Layar Manajemen Menu & Harga
-│       ├── ShiftScreen.js   # Layar Buka & Tutup Shift (Rekonsiliasi Kas)
-│       ├── PresensiScreen.js# Layar Presensi Masuk & Pulang Pekerja
-│       └── RiwayatScreen.js # Layar Riwayat Transaksi & Ringkasan Omset
-├── App.js                   # Navigasi Tab Bottom Bar & State Utama
+│   ├── screens/
+│   │   ├── AuthScreen.js    # Layar Autentikasi (Login, Register & Modal Token Diterima)
+│   │   ├── KasirScreen.js   # Layar Kasir POS utama
+│   │   ├── MenuScreen.js    # Layar Manajemen Menu & Harga (Toggle Responsif & Sync API)
+│   │   ├── ShiftScreen.js   # Layar Buka & Tutup Shift (Rekonsiliasi Kas)
+│   │   ├── PresensiScreen.js# Layar Presensi Masuk & Pulang Pekerja
+│   │   └── RiwayatScreen.js # Layar Riwayat Transaksi & Ringkasan Omset
+├── App.js                   # State Utama, Navigasi Tab, Uji Coba Token & Log Console
 ├── app.json                 # Konfigurasi Expo
 ├── babel.config.js          # Babel preset Expo
 └── package.json             # Dependensi proyek
 ```
+
+---
+
+## 🔐 Implementasi Token Authentication (Sesuai Materi Kuliah)
+
+Aplikasi telah mengimplementasikan arsitektur keamanan API berbasis token sesuai Task 01, Task 02, dan Task 03:
+
+### 1. Task 01 – Login & Store Access Token (SecureStore)
+- Pengguna memasukkan username/email dan password di layar Login.
+- Request dikirimkan ke endpoint `POST /login`.
+- Server mengembalikan response JSON berisi `access_token` (format standar JWT: `Header.Payload.Signature`) dan data user.
+- Token disimpan secara aman di perangkat menggunakan `SecureStore` (Hardware Keystore di Android / Keychain di iOS) dengan key `"access_token"`.
+- Muncul modal konfirmasi *"Login Berhasil: Token berhasil diterima dan disimpan"* lengkap dengan preview token.
+
+### 2. Task 02 – Attach Token to Protected API Request
+- Saat membuka katalog menu atau memuat data, aplikasi mengambil token dari SecureStore:
+  `const token = await SecureStore.getItemAsync("access_token");`
+- Token dikirimkan melalui header `Authorization`:
+  `Authorization: Bearer <access_token>`
+- Server memvalidasi tanda tangan (signature) dan masa berlaku (*exp*) token:
+  - **Jika token valid**: Mengembalikan data menu (HTTP 200 OK).
+  - **Jika tanpa token / tidak valid**: Server menolak dengan status HTTP 401 Unauthorized.
+
+### 3. Task 03 – Protect Session & Logout (Hapus Token)
+- Pengguna dapat keluar kapan saja dengan menekan tombol Logout di Header atau Modal Profil.
+- Token dihapus secara permanen dari SecureStore:
+  `await SecureStore.deleteItemAsync("access_token");`
+- State `authSession` direset menjadi `null` dan aplikasi secara otomatis kembali ke layar Login (*Unauthenticated*).
+
+---
+
+## ⚡ Implementasi Sprint 05 – Error Handling, Loading, Timeout, & Offline
+
+Sesuai materi **Sprint 05 Mobile Programming** (TASK 01, TASK 02, TASK 03, dan FINAL CHECKLIST), aplikasi KasirKu telah dilengkapi dengan penanganan kondisi API dan jaringan yang tangguh:
+
+### 1. Task 01 – Handle API Error (2xx, 4xx, 5xx, & Network)
+- **Status 2xx (Success)**: Menampilkan katalog menu dan daftar harga ketika request berhasil diterima.
+- **Status 4xx (Client Error)**: Menangani error client seperti `404 Not Found` atau `401 Unauthorized`. Menampilkan ilustrasi peringatan merah *"Data tidak ditemukan. Menu yang Anda cari tidak tersedia. (404 Not Found)"* disertai tombol *"Coba Lagi"*. Data tidak ditampilkan saat gagal.
+- **Status 5xx (Server Error)**: Menangani gangguan server seperti `500 Internal Server Error`. Menampilkan icon stack server rusak *"Terjadi kesalahan pada server. Server sedang mengalami gangguan. Silakan coba lagi nanti. (500 Internal Server Error)"* disertai tombol *"Coba Lagi"*.
+- **Response Diperiksa**: Menggunakan kode standar:
+  ```javascript
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  ```
+
+### 2. Task 02 – Loading, Error & Retry Flow
+- **Alur Request**: `REQUEST -> LOADING -> ERROR -> RETRY -> REQUEST AGAIN`.
+- **Loading State**: Spinner animasi lingkaran + teks *"Memuat data... Mohon tunggu sebentar."*.
+- **Retrying State**: Ketika tombol *"Coba Lagi"* ditekan, tampilan bertransisi ke *"Mencoba lagi... Mengambil data terbaru."*.
+- **Retry Mechanism**: Mengirim ulang request ke API secara otomatis tanpa perlu restart aplikasi.
+
+### 3. Task 03 – Handle Offline & Feedback Jaringan
+- **Alur Offline**: `REQUEST -> NO INTERNET -> OFFLINE STATE -> USER FEEDBACK -> RETRY`.
+- **Offline State**: Icon Wi-Fi silang merah + teks *"Tidak ada koneksi internet. Periksa koneksi Anda dan coba lagi."* + tombol *"Coba Lagi"*.
+- **Offline Banner Global**: Banner merah melayang di bawah Header pada seluruh halaman saat offline terdeteksi.
+- **Auto Reconnect / Retry**: Menampilkan *"Mencoba lagi... Menghubungkan ke internet."* lalu memuat data normal saat koneksi kembali aktif.
+
+### 4. Sprint 05 – Integrasi Langsung Pada Siklus Hidup Aplikasi
+Fitur error handling, loading, timeout, dan offline diterapkan secara langsung pada siklus hidup aplikasi (*natural & native application lifecycle*):
+- **Deteksi Jaringan Nyata**: Aplikasi mendeteksi status internet HP/Browser secara langsung. Jika Wi-Fi atau data seluler dimatikan, aplikasi langsung menampilkan **Offline State View** dan **Banner Global Offline**.
+- **Pull to Refresh**: Pengguna dapat menarik layar ke bawah (*pull-to-refresh*) untuk memuat ulang data terbaru dari API.
+- **Empty State Alami**: Jika belum ada menu di database lokal, aplikasi otomatis menampilkan ilustrasi kotak kosong (*"Belum ada data"*) dan tombol *"Muat Menu Bawaan"*.
+- **Timeout Otomatis**: Jika request melebihi batas waktu 4 detik, request dibatalkan (*Abort*) dan memicu tampilan *"Waktu permintaan habis"*.
+
+---
+
+## 🎯 Panduan Menjawab Pertanyaan Dosen Saat Demo
+
+| No | Pertanyaan Demo | Jawaban Tepat Sesuai Arsitektur |
+|---|---|---|
+| **1** | **Bagaimana aplikasi menangani status response API?** | Aplikasi memeriksa properti `response.ok` dan kode status HTTP. Jika status berada di luar rentang 2xx (seperti 4xx atau 5xx), aplikasi melempar error terstruktur (`ApiError`) dan menampilkan UI error ramah pengguna beserta tombol Coba Lagi tanpa menyebabkan crash. |
+| **2** | **Apa yang terjadi jika server sedang down (HTTP 500)?** | Ditangkap oleh blok `catch`, status diubah menjadi `error`, dan komponen `ApiStateView` menampilkan icon gangguan server dengan pesan spesifik 500 serta tombol Coba Lagi. Data lama atau rusak tidak ditampilkan ke layar. |
+| **3** | **Bagaimana aplikasi menangani kondisi offline?** | Layanan `NetworkService` memantau konektivitas internet. Jika tidak ada koneksi, request langsung memicu tampilan offline dengan icon Wi-Fi silang dan banner offline global. Tombol "Coba Lagi" akan mencoba menghubungkan kembali perangkat ke internet. |
+| **4** | **Bagaimana cara kerja Timeout Handling?** | Request dibungkus dengan batas waktu (misal 4 detik). Jika server tidak membalas dalam batas waktu tersebut, request dibatalkan (*abort*) dan memicu state Timeout dengan icon jam waktu *"Waktu permintaan habis. Server tidak merespons"*. |
+| **5** | **Bagaimana cara mendemokan kondisi offline & error langsung?** | **Uji Offline**: Matikan Wi-Fi atau aktifkan *Airplane Mode* pada HP / browser -> Buka tab **Menu** -> Aplikasi otomatis menampilkan layar Offline dengan tombol *"Coba Lagi"* dan banner merah atas. Nyalakan Wi-Fi kembali lalu klik *"Coba Lagi"* -> data langsung pulih (**Success State**)! |
 
 ---
 

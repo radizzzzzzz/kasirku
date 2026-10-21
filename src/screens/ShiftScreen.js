@@ -9,6 +9,7 @@ import {
   Modal,
   Platform,
   KeyboardAvoidingView,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
@@ -21,9 +22,25 @@ export default function ShiftScreen({
   activeEmployee,
   shiftHistory,
   onUpdateShiftHistory,
+  isOnline = true,
 }) {
   const [isEndShiftModalOpen, setIsEndShiftModalOpen] = useState(false);
   const [isStartShiftModalOpen, setIsStartShiftModalOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const freshShift = await StorageService.getActiveShift();
+      const freshHistory = await StorageService.getShiftHistory();
+      onUpdateActiveShift(freshShift);
+      onUpdateShiftHistory(freshHistory || []);
+    } catch (e) {
+      console.warn('Shift refresh error:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // End Shift inputs
   const [actualCash, setActualCash] = useState('');
@@ -114,7 +131,18 @@ export default function ShiftScreen({
   };
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.container}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          colors={[THEME.colors.primary]}
+          tintColor={THEME.colors.primary}
+        />
+      }
+    >
       {/* Current Shift Section */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>STATUS SHIFT SAAT INI</Text>
@@ -1019,5 +1047,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  shiftOfflineNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+    gap: 6,
+  },
+  shiftOfflineNoticeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
+    flex: 1,
   },
 });

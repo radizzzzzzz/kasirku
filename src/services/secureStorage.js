@@ -2,9 +2,12 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
+import { generateJWT } from './jwt';
+
 // Keys used in Secure Storage
 export const SECURE_KEYS = {
   AUTH_SESSION: 'kasirku_auth_session',
+  ACCESS_TOKEN: 'access_token',
   USERS_DB: 'kasirku_secure_users',
   REMEMBERED_USER: 'kasirku_remembered_user',
 };
@@ -208,9 +211,23 @@ export const AuthService = {
       throw new Error('Password salah. Silakan coba lagi.');
     }
 
+    // Generate Standard JWT Token (Header.Payload.Signature)
+    const tokenPayload = {
+      sub: user.id,
+      employeeId: user.employeeId,
+      name: user.name,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
+    const accessToken = generateJWT(tokenPayload, 3600); // Masa aktif 1 jam
+    const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
+
     // Create session payload
     const session = {
-      token: `sec_tok_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      token: accessToken,
+      access_token: accessToken,
+      expires_at: expiresAt,
       user: {
         id: user.id,
         employeeId: user.employeeId,
@@ -222,6 +239,8 @@ export const AuthService = {
       loggedInAt: new Date().toISOString(),
     };
 
+    // Save access_token directly in SecureStore (Task 01)
+    await SecureStorage.setItem(SECURE_KEYS.ACCESS_TOKEN, accessToken);
     // Save session in SecureStore
     await SecureStorage.setItem(SECURE_KEYS.AUTH_SESSION, session);
 
@@ -281,9 +300,22 @@ export const AuthService = {
     users.push(newUser);
     await SecureStorage.setItem(SECURE_KEYS.USERS_DB, users);
 
-    // Auto login after register
+    // Auto login after register with JWT
+    const tokenPayload = {
+      sub: newUser.id,
+      employeeId: newUser.employeeId,
+      name: newUser.name,
+      username: newUser.username,
+      email: newUser.email,
+      role: newUser.role,
+    };
+    const accessToken = generateJWT(tokenPayload, 3600);
+    const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
+
     const session = {
-      token: `sec_tok_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      token: accessToken,
+      access_token: accessToken,
+      expires_at: expiresAt,
       user: {
         id: newUser.id,
         employeeId: newUser.employeeId,
@@ -295,19 +327,26 @@ export const AuthService = {
       loggedInAt: new Date().toISOString(),
     };
 
+    await SecureStorage.setItem(SECURE_KEYS.ACCESS_TOKEN, accessToken);
     await SecureStorage.setItem(SECURE_KEYS.AUTH_SESSION, session);
     return { session, newUser };
   },
 
-  // Logout and clear active secure session
+  // Logout and clear active secure session & access_token (Task 03)
   logout: async () => {
     try {
+      await SecureStorage.deleteItem(SECURE_KEYS.ACCESS_TOKEN);
       await SecureStorage.deleteItem(SECURE_KEYS.AUTH_SESSION);
       return true;
     } catch (e) {
       console.error('[AuthService.logout] Error clearing session:', e);
       return false;
     }
+  },
+
+  // Get raw access token from Secure Storage
+  getAccessToken: async () => {
+    return await SecureStorage.getItem(SECURE_KEYS.ACCESS_TOKEN, null);
   },
 
   // Get all registered accounts (for developer/demo switcher)

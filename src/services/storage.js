@@ -10,6 +10,7 @@ const KEYS = {
   ATTENDANCE: '@kasirku_attendance',
   TRANSACTIONS: '@kasirku_transactions',
   STORE_INFO: '@kasirku_store_info',
+  LOGIN_HISTORY: '@kasirku_login_history',
 };
 
 // Memory fallback in case storage has issues or is initializing
@@ -154,6 +155,59 @@ export const StorageService = {
   // Store Info
   getStoreInfo: async () => safeGet(KEYS.STORE_INFO, INITIAL_STORE_INFO),
   saveStoreInfo: async (info) => safeSet(KEYS.STORE_INFO, info),
+
+  // Login History (Akun-akun yang pernah login sebelumnya)
+  getLoginHistory: async () => {
+    const defaultHistory = [
+      {
+        id: 'USR-01',
+        employeeId: 'EMP-01',
+        name: 'Syauqi Iwan',
+        username: 'syauqi',
+        email: 'syauqi@kasirku.com',
+        role: 'Kasir & Barista',
+        lastLoginAt: new Date().toISOString(),
+      },
+      {
+        id: 'USR-03',
+        employeeId: 'EMP-03',
+        name: 'Administrator',
+        username: 'admin',
+        email: 'admin@kasirku.com',
+        role: 'Supervisor & Kasir',
+        lastLoginAt: new Date(Date.now() - 3600000).toISOString(),
+      },
+      {
+        id: 'USR-02',
+        employeeId: 'EMP-02',
+        name: 'Siti Rahma',
+        username: 'siti',
+        email: 'siti@kasirku.com',
+        role: 'Kasir & Kitchen',
+        lastLoginAt: new Date(Date.now() - 86400000).toISOString(),
+      },
+    ];
+    return await safeGet(KEYS.LOGIN_HISTORY, defaultHistory);
+  },
+  recordLoginHistory: async (user) => {
+    if (!user) return [];
+    const history = await StorageService.getLoginHistory();
+    const filtered = (history || []).filter(
+      (h) => h.id !== user.id && h.username?.toLowerCase() !== user.username?.toLowerCase()
+    );
+    const entry = {
+      id: user.id,
+      employeeId: user.employeeId,
+      name: user.name,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      lastLoginAt: new Date().toISOString(),
+    };
+    const updated = [entry, ...filtered];
+    await safeSet(KEYS.LOGIN_HISTORY, updated);
+    return updated;
+  },
 
   // Format IDR Helper
   formatIDR: (amount) => {

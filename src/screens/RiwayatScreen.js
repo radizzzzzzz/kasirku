@@ -5,15 +5,29 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
 import { StorageService } from '../services/storage';
 import ReceiptModal from '../components/ReceiptModal';
+import ApiStateView from '../components/ApiStateView';
 
-export default function RiwayatScreen({ transactions, storeInfo }) {
+export default function RiwayatScreen({ transactions = [], storeInfo, isOnline = true }) {
   const [selectedFilter, setSelectedFilter] = useState('SEMUA'); // 'SEMUA' | 'TUNAI' | 'QRIS'
   const [selectedTransaction, setSelectedTransaction] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await StorageService.getTransactions();
+    } catch (e) {
+      console.warn('Riwayat refresh error:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Financial summary
   const totalOmset = transactions.reduce((sum, tx) => sum + (tx.grandTotal || 0), 0);
@@ -86,13 +100,27 @@ export default function RiwayatScreen({ transactions, storeInfo }) {
         style={styles.txList}
         contentContainerStyle={styles.txListContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            colors={[THEME.colors.primary]}
+            tintColor={THEME.colors.primary}
+          />
+        }
       >
-        {filteredTransactions.length === 0 ? (
+        {transactions.length === 0 ? (
+          <ApiStateView
+            type="empty"
+            title="Belum Ada Transaksi"
+            message="Transaksi yang diproses di kasir akan otomatis tercatat rapi di sini."
+          />
+        ) : filteredTransactions.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Ionicons name="receipt-outline" size={54} color={THEME.colors.textLight} />
-            <Text style={styles.emptyTitle}>Belum Ada Transaksi</Text>
+            <Ionicons name="search" size={48} color={THEME.colors.textLight} />
+            <Text style={styles.emptyTitle}>Tidak Ditemukan</Text>
             <Text style={styles.emptySubtitle}>
-              Transaksi yang selesai di kasir akan otomatis tercatat rapi di sini.
+              Tidak ada transaksi dengan metode pembayaran {selectedFilter}.
             </Text>
           </View>
         ) : (
