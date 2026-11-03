@@ -7,10 +7,16 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": false,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Aplikasi KasirKu membutuhkan izin akses kamera untuk mengambil foto presensi karyawan."
+      }
     },
     "android": {
-      "package": "com.kasirku.app"
+      "package": "com.kasirku.app",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/qris.jpg",
@@ -18,7 +24,14 @@
     },
     "plugins": [
       "expo-asset",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-status-bar",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Izinkan KasirKu menggunakan kamera untuk foto presensi karyawan."
+        }
+      ]
     ]
   }
 }

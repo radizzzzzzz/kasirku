@@ -10,6 +10,7 @@ import {
   Platform,
   ActivityIndicator,
   Modal,
+  Vibration,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/theme';
@@ -107,6 +108,10 @@ export default function AuthScreen({ onLoginSuccess }) {
       const updatedHistory = await StorageService.getLoginHistory();
       setLoginHistory(updatedHistory || []);
 
+      // Sensor Getar: Haptic feedback lembut saat login berhasil
+      try {
+        Vibration.vibrate(60);
+      } catch (e) {}
       // Tampilkan popup "Login Berhasil" sederhana tanpa detail token
       setTokenSuccessModal({
         session,
@@ -114,6 +119,10 @@ export default function AuthScreen({ onLoginSuccess }) {
         user: session.user,
       });
     } catch (err) {
+      // Sensor Getar: Picu getaran fisik saat salah memasukkan password / akun gagal
+      try {
+        Vibration.vibrate([0, 120, 80, 160]);
+      } catch (e) {}
       setErrorMessage(err.message || 'Gagal masuk. Periksa kembali akun Anda.');
     } finally {
       setIsLoading(false);

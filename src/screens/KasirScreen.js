@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,12 @@ import {
   TouchableOpacity,
   ScrollView,
   RefreshControl,
+  Vibration,
+  Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Accelerometer } from 'expo-sensors';
 import { THEME } from '../constants/theme';
 import { INITIAL_CATEGORIES } from '../constants/initialData';
 import { StorageService } from '../services/storage';
@@ -54,7 +58,65 @@ export default function KasirScreen({
   };
 
   // Cart operations
+  // Ref untuk mendeteksi keranjang dan debounce goyangan (Sensor Accelerometer)
+  const lastShakeTime = useRef(0);
+  const cartRef = useRef(cart);
+  useEffect(() => {
+    cartRef.current = cart;
+  }, [cart]);
+
+  // Sensor Accelerometer: Deteksi Guncangan untuk Kosongkan Keranjang (Shake to Clear Cart)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    let sub = null;
+    try {
+      Accelerometer.setUpdateInterval(150);
+      sub = Accelerometer.addListener(({ x, y, z }) => {
+        const magnitude = Math.sqrt(x * x + y * y + z * z);
+        if (magnitude > 1.85) {
+          const now = Date.now();
+          if (now - lastShakeTime.current > 1200) {
+            lastShakeTime.current = now;
+            if (cartRef.current && cartRef.current.length > 0) {
+              try {
+                Vibration.vibrate([0, 120, 80, 120]);
+              } catch (e) {}
+              Alert.alert(
+                'Goyangan Terdeteksi! 🔔',
+                `Sensor mendeteksi guncangan perangkat. Ingin mengosongkan ${cartRef.current.length} item di keranjang belanja?`,
+                [
+                  { text: 'Batal', style: 'cancel' },
+                  {
+                    text: 'Kosongkan Keranjang',
+                    style: 'destructive',
+                    onPress: () => {
+                      setCart([]);
+                      try {
+                        Vibration.vibrate(60);
+                      } catch (e) {}
+                    },
+                  },
+                ]
+              );
+            }
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('Accelerometer Kasir listener error:', e);
+    }
+
+    return () => {
+      if (sub) sub.remove();
+    };
+  }, []);
+
   const handleAddToCart = (product) => {
+    // Sensor Getar: Haptic feedback lembut saat menambah barang
+    try {
+      Vibration.vibrate(30);
+    } catch (e) {}
     if (product.stock <= 0) {
       showAlert('Stok Habis', 'Produk ini sedang tidak tersedia.');
       return;
@@ -176,6 +238,11 @@ export default function KasirScreen({
       onTransactionComplete(newTx);
     }
 
+    // Sensor Getar: Haptic feedback transaksi selesai dan nota dicetak
+    try {
+      Vibration.vibrate([0, 80, 50, 100]);
+    } catch (e) {}
+
     // 3. Clear cart & open Receipt
     setCart([]);
     setLastTransaction(newTx);
@@ -228,6 +295,16 @@ export default function KasirScreen({
           })}
         </ScrollView>
       </View>
+
+      {/* Sensor Gesture Hint: Shake to Clear Cart */}
+      {cart.length > 0 && (
+        <View style={styles.sensorHintBar}>
+          <Ionicons name="phone-portrait-outline" size={13} color={THEME.colors.primary} />
+          <Text style={styles.sensorHintText}>
+            Fitur Sensor: Goyangkan HP untuk mereset {cart.length} item di keranjang
+          </Text>
+        </View>
+      )}
 
       {/* Product List or Empty State */}
       {products.length === 0 ? (
@@ -397,6 +474,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: THEME.colors.textMuted,
+  },
+  sensorHintBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#EFF6FF',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  sensorHintText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.colors.primaryDark,
   },
   categoryPillTextActive: {
     color: '#FFFFFF',

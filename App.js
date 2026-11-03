@@ -12,6 +12,7 @@ import {
   Platform,
   TextInput,
   ScrollView,
+  Vibration,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from './src/constants/theme';
@@ -28,6 +29,7 @@ import MenuScreen from './src/screens/MenuScreen';
 import ShiftScreen from './src/screens/ShiftScreen';
 import PresensiScreen from './src/screens/PresensiScreen';
 import RiwayatScreen from './src/screens/RiwayatScreen';
+import SensorScreen from './src/screens/SensorScreen';
 
 // Components
 import Header from './src/components/Header';
@@ -36,7 +38,7 @@ import ApiStateView from './src/components/ApiStateView';
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [authSession, setAuthSession] = useState(null);
-  const [activeTab, setActiveTab] = useState('KASIR'); // KASIR | MENU | SHIFT | PRESENSI | RIWAYAT
+  const [activeTab, setActiveTab] = useState('KASIR'); // KASIR | MENU | SHIFT | PRESENSI | RIWAYAT | SENSOR
 
   // Central Application State
   const [products, setProducts] = useState([]);
@@ -268,6 +270,10 @@ export default function App() {
         `Sekarang Anda bertugas sebagai ${session.user.name} (${session.user.role}).`
       );
     } catch (err) {
+      // Sensor Getar: Picu getaran fisik saat salah kata sandi beralih akun
+      try {
+        Vibration.vibrate([0, 120, 80, 160]);
+      } catch (e) {}
       setSwitchPasswordError(err.message || 'Kata sandi salah. Akses ditolak!');
     } finally {
       setIsSwitching(false);
@@ -355,6 +361,8 @@ export default function App() {
         return 'Presensi & Kehadiran';
       case 'RIWAYAT':
         return 'Riwayat Transaksi';
+      case 'SENSOR':
+        return 'Sensor Perangkat';
       default:
         return 'KasirKu';
     }
@@ -439,6 +447,10 @@ export default function App() {
                 onUpdateAttendance={setAttendanceList}
                 isOnline={isOnline}
               />
+            )}
+
+            {activeTab === 'SENSOR' && (
+              <SensorScreen />
             )}
 
             {activeTab === 'RIWAYAT' && (
@@ -554,6 +566,26 @@ export default function App() {
             ]}
           >
             Riwayat
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => setActiveTab('SENSOR')}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={activeTab === 'SENSOR' ? 'hardware-chip' : 'hardware-chip-outline'}
+            size={22}
+            color={activeTab === 'SENSOR' ? THEME.colors.primary : THEME.colors.textMuted}
+          />
+          <Text
+            style={[
+              styles.tabLabel,
+              activeTab === 'SENSOR' && styles.tabLabelActive,
+            ]}
+          >
+            Sensor
           </Text>
         </TouchableOpacity>
       </View>
