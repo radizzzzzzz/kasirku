@@ -50,6 +50,14 @@ export default function SensorScreen() {
     let isMounted = true;
 
     async function initSensors() {
+      if (Platform.OS === 'web') {
+        if (isMounted) {
+          setIsAvailable(false);
+          setHasPermission(true);
+        }
+        return;
+      }
+
       try {
         const available = await Accelerometer.isAvailableAsync();
         if (isMounted) setIsAvailable(available);
@@ -199,12 +207,12 @@ export default function SensorScreen() {
       Animated.timing(pulseAnim, {
         toValue: 1.08,
         duration: 120,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }),
       Animated.timing(pulseAnim, {
         toValue: 1,
         duration: 180,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }),
     ]).start();
 
