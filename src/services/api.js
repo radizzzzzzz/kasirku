@@ -15,6 +15,7 @@ import { generateJWT, verifyJWT, decodeJWT } from './jwt';
 import { StorageService } from './storage';
 import { SecureStorage, SECURE_KEYS } from './secureStorage';
 import { networkService } from './network';
+import { sendExpoPushNotification } from './notifications';
 
 // Base URL API KasirKu
 export const API_BASE_URL = 'https://api.kasirku.id';
@@ -334,6 +335,83 @@ export const ApiServer = {
       data: { message: 'Logout berhasil. Sesi server telah diakhiri.' },
     };
   },
+
+  /**
+   * Endpoint: POST /notifications/register
+   * TASK 01: Menerima & menyimpan push token ke backend
+   */
+  handleRegisterPushToken: async (token, user = null) => {
+    if (!token) {
+      return {
+        status: 400,
+        ok: false,
+        data: { error: 'Push token tidak boleh kosong.' },
+      };
+    }
+
+    ApiEventLogs.add('PUSH', `Token registered -> ${token.substring(0, 24)}...`, `User: ${user?.name || 'Kasir'}`);
+
+    if (!ApiServer.deviceTokens) {
+      ApiServer.deviceTokens = new Map();
+    }
+
+    const tokenEntry = {
+      token,
+      userId: user?.id || 'ANONYMOUS',
+      userName: user?.name || 'Kasir',
+      userRole: user?.role || 'Staff',
+      registeredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      platform: 'expo',
+    };
+
+    ApiServer.deviceTokens.set(token, tokenEntry);
+
+    return {
+      status: 200,
+      ok: true,
+      data: {
+        message: 'Push token berhasil didaftarkan ke server.',
+        deviceToken: tokenEntry,
+      },
+    };
+  },
+
+  /**
+   * Endpoint: POST /notifications/send
+   * TASK 02: Mengirim push notification ke perangkat terdaftar via Expo Push Service
+   */
+  handleSendPushNotification: async ({ to, title, body, data = {} }) => {
+    if (!to) {
+      return {
+        status: 400,
+        ok: false,
+        data: { error: 'Target device token (to) wajib diisi.' },
+      };
+    }
+
+    ApiEventLogs.add('PUSH-SEND', `Sending push -> ${title}`, `Target: ${to.substring(0, 20)}...`);
+
+    try {
+      const res = await sendExpoPushNotification({ to, title, body, data });
+      return {
+        status: 200,
+        ok: true,
+        data: {
+          message: 'Notifikasi berhasil dikirim melalui Expo Push API.',
+          ticket: res,
+        },
+      };
+    } catch (err) {
+      return {
+        status: 500,
+        ok: false,
+        data: {
+          error: err.message || 'Gagal mengirim push notifikasi.',
+        },
+      };
+    }
+  },
 };
 
 /**
@@ -601,5 +679,24 @@ export const ApiClient = {
       decoded: decodeJWT(token),
       verification: verifyJWT(token),
     };
+  },
+
+  /**
+   * TASK 01: Registrasi Push Token ke Server Backend
+   */
+  registerPushToken: async (token, user = null) => {
+    ApiEventLogs.add('PUSH-REG', 'Mendaftarkan device token ke server...', token?.substring(0, 24));
+    const res = await ApiServer.handleRegisterPushToken(token, user);
+    if (res.ok) {
+      await StorageService.savePushToken(token);
+    }
+    return res;
+  },
+
+  /**
+   * TASK 02: Mengirim Push Notifikasi via Server
+   */
+  sendPushNotification: async ({ to, title, body, data = {} }) => {
+    return await ApiServer.handleSendPushNotification({ to, title, body, data });
   },
 };

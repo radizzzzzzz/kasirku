@@ -15,7 +15,9 @@
     "android": {
       "package": "com.kasirku.app",
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
       ]
     },
     "web": {
@@ -31,7 +33,20 @@
         {
           "cameraPermission": "Izinkan KasirKu menggunakan kamera untuk foto presensi karyawan."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/qris.jpg",
+          "color": "#2563EB",
+          "sounds": []
+        }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "kasirku-pos-app"
+      }
+    }
   }
 }

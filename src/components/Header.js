@@ -7,6 +7,8 @@ export default function Header({
   activeEmployee,
   activeShift,
   onPressProfile,
+  onPressNotification,
+  hasNotification = false,
   onLogout,
   title = 'KasirKu',
   subtitle,
@@ -57,6 +59,17 @@ export default function Header({
                 </Text>
               </View>
               <Ionicons name="chevron-down" size={12} color={THEME.colors.textMuted} />
+            </TouchableOpacity>
+          )}
+
+          {onPressNotification && (
+            <TouchableOpacity
+              style={styles.notifButton}
+              onPress={onPressNotification}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="notifications-outline" size={18} color={THEME.colors.primary} />
+              {hasNotification && <View style={styles.notifBadgeDot} />}
             </TouchableOpacity>
           )}
 
@@ -194,5 +207,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#FECDD3',
+  },
+  notifButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: THEME.colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  notifBadgeDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: THEME.colors.danger,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
 });

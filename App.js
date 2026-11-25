@@ -21,6 +21,13 @@ import { AuthService } from './src/services/secureStorage';
 import { ApiClient, ApiEventLogs } from './src/services/api';
 import { networkService } from './src/services/network';
 import { showAlert } from './src/utils/alert';
+import {
+  registerForPushNotificationsAsync,
+  setupNotificationListeners,
+  checkColdStartNotification,
+  sendExpoPushNotification,
+  scheduleLocalTestNotification,
+} from './src/services/notifications';
 
 // Screens
 import AuthScreen from './src/screens/AuthScreen';
@@ -71,6 +78,171 @@ export default function App() {
   };
 
   const [isOnline, setIsOnline] = useState(networkService.isConnected());
+
+  // Push Notification States (Task 01, Task 02, Task 03)
+  const [expoPushToken, setExpoPushToken] = useState(null);
+  const [pushStatusText, setPushStatusText] = useState('Memeriksa izin & token...');
+  const [isPushRegistered, setIsPushRegistered] = useState(false);
+  const [isPhysicalPhone, setIsPhysicalPhone] = useState(false);
+  const [lastNotification, setLastNotification] = useState(null);
+  const [isNotifModalOpen, setIsNotifModalOpen] = useState(false);
+  const [hasUnreadNotification, setHasUnreadNotification] = useState(false);
+  const [isSendingTestNotif, setIsSendingTestNotif] = useState(false);
+
+  // TASK 03: Penanganan Respon Notifikasi saat Pengguna Mengetuk Notifikasi (Notification Tap Listener)
+  const handleNotificationResponse = ({ response, data, isColdStart }) => {
+    console.log('[App] Respon Notifikasi Diklik (Task 03):', data);
+    setHasUnreadNotification(false);
+    setLastNotification({
+      title: response?.notification?.request?.content?.title || 'KasirKu',
+      body: response?.notification?.request?.content?.body || '',
+      data: data || {},
+      timestamp: new Date().toLocaleTimeString('id-ID'),
+    });
+
+    const targetScreen = data?.screen;
+    if (targetScreen) {
+      const validTabs = ['KASIR', 'MENU', 'SHIFT', 'PRESENSI', 'RIWAYAT', 'SENSOR'];
+      if (validTabs.includes(targetScreen)) {
+        setActiveTab(targetScreen);
+        showAlert(
+          'Navigasi Notifikasi (Task 03)',
+          `Membuka layar ${targetScreen} berdasarkan aksi notifikasi!${data?.transactionId ? `\n(ID Transaksi: ${data.transactionId})` : ''}`
+        );
+      }
+    }
+  };
+
+  // TASK 02: Penanganan Notifikasi Masuk saat Aplikasi Foreground
+  const handleNotificationReceived = (notification) => {
+    console.log('[App] Notifikasi Diterima Foreground (Task 02):', notification);
+    setHasUnreadNotification(true);
+    setLastNotification({
+      title: notification?.request?.content?.title || 'KasirKu',
+      body: notification?.request?.content?.body || '',
+      data: notification?.request?.content?.data || {},
+      timestamp: new Date().toLocaleTimeString('id-ID'),
+    });
+  };
+
+  // Setup Push Notification Lifecycle (Task 01 & Task 03)
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initPushNotification() {
+      try {
+        const result = await registerForPushNotificationsAsync();
+        if (!isMounted) return;
+
+        if (result.success && result.token) {
+          setExpoPushToken(result.token);
+          setIsPhysicalPhone(result.isDevice);
+          setIsPushRegistered(true);
+          setPushStatusText(result.isDevice ? 'Token Terdaftar (Perangkat Fisik)' : 'Token Simulasi (Mode Emulator)');
+
+          // Daftarkan ke Backend Server (Task 01)
+          await ApiClient.registerPushToken(result.token, authSession?.user);
+        } else {
+          setPushStatusText(result.error || 'Izin notifikasi tidak diberikan');
+          setIsPushRegistered(false);
+        }
+      } catch (err) {
+        console.warn('[App] Push notification init error:', err);
+        if (isMounted) setPushStatusText('Gagal inisialisasi notifikasi');
+      }
+    }
+
+    initPushNotification();
+
+    // Pasang Listener Notifikasi (Task 03)
+    const cleanupListeners = setupNotificationListeners({
+      onNotificationReceived: handleNotificationReceived,
+      onNotificationResponse: handleNotificationResponse,
+    });
+
+    // Cek Cold Start (Aplikasi dibuka dari notifikasi saat killed state) (Task 03)
+    checkColdStartNotification(handleNotificationResponse);
+
+    return () => {
+      isMounted = false;
+      if (cleanupListeners) cleanupListeners();
+    };
+  }, [authSession?.user?.id]);
+
+  // TASK 02: Fungsi Mengirim Notifikasi Uji Coba dari Dalam Aplikasi
+  const handleSendTestNotification = async (scenarioType) => {
+    if (isSendingTestNotif) return;
+    setIsSendingTestNotif(true);
+
+    let title = 'KasirKu POS';
+    let body = 'Pemberitahuan dari KasirKu';
+    let payloadData = { screen: 'KASIR' };
+
+    switch (scenarioType) {
+      case 'TRANSACTION':
+        title = 'Transaksi Baru Berhasil!';
+        body = 'Pesanan Meja 03 senilai Rp 85.000 telah lunas.';
+        payloadData = {
+          screen: 'RIWAYAT',
+          transactionId: 'TRX-' + Date.now().toString().slice(-4),
+          action: 'VIEW_TRANSACTION',
+        };
+        break;
+      case 'SHIFT':
+        title = 'Shift Kasir Ditutup';
+        body = 'Shift Pagi telah selesai. Total omset laci: Rp 1.450.000.';
+        payloadData = {
+          screen: 'SHIFT',
+          shiftId: activeShift?.id || 'SHIFT-001',
+        };
+        break;
+      case 'PRESENSI':
+        title = 'Pengingat Presensi Karyawan';
+        body = 'Waktu shift segera dimulai. Silakan lakukan presensi & foto diri.';
+        payloadData = {
+          screen: 'PRESENSI',
+        };
+        break;
+      case 'MENU':
+        title = 'Peringatan Stok Menu!';
+        body = 'Stok bahan baku Kopi Susu Aren tersisa kurang dari 5 porsi.';
+        payloadData = {
+          screen: 'MENU',
+        };
+        break;
+      default:
+        break;
+    }
+
+    try {
+      if (isPhysicalPhone && expoPushToken && !expoPushToken.includes('Simulated_Emulator')) {
+        // Kirim via Expo Push API (Task 02)
+        await sendExpoPushNotification({
+          to: expoPushToken,
+          title,
+          body,
+          data: payloadData,
+        });
+      } else {
+        // Fallback jadwal notifikasi lokal (1 detik) untuk emulator / offline
+        await scheduleLocalTestNotification({
+          title,
+          body,
+          data: payloadData,
+          delaySeconds: 1,
+        });
+      }
+
+      showAlert(
+        'Notifikasi Terkirim (Task 02)',
+        `Notifikasi "${title}" telah dikirimkan!\n\nKetuk banner notifikasi yang muncul di layar untuk menguji auto-routing ke tab ${payloadData.screen} (Task 03).`
+      );
+    } catch (e) {
+      showAlert('Gagal Kirim', e.message || 'Gagal mengirim push notifikasi.');
+    } finally {
+      setIsSendingTestNotif(false);
+    }
+  };
 
   useEffect(() => {
     // [1] App started log
@@ -384,6 +556,11 @@ export default function App() {
             activeEmployee={activeEmployee}
             activeShift={activeShift}
             onPressProfile={() => setIsProfileModalOpen(true)}
+            onPressNotification={() => {
+              setIsNotifModalOpen(true);
+              setHasUnreadNotification(false);
+            }}
+            hasNotification={hasUnreadNotification}
             onLogout={handleLogout}
             isOnline={isOnline}
           />
@@ -770,6 +947,138 @@ export default function App() {
                 )}
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+      {/* Push Notification Panel Modal (Task 01, Task 02, Task 03) */}
+      <Modal visible={isNotifModalOpen} transparent animationType="slide">
+        <View style={styles.notifModalOverlay}>
+          <View style={styles.notifModalCard}>
+            <View style={styles.notifModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={styles.notifHeaderIcon}>
+                  <Ionicons name="notifications" size={20} color={THEME.colors.primary} />
+                </View>
+                <View>
+                  <Text style={styles.notifModalTitle}>Push Notifications</Text>
+                  <Text style={styles.notifModalSubtitle}>Status & Simulator Task 01, 02, 03</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsNotifModalOpen(false)}
+                style={styles.notifCloseButton}
+              >
+                <Ionicons name="close" size={20} color={THEME.colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              {/* Task 01: Status Device Token & Registrasi */}
+              <View style={styles.notifSectionBox}>
+                <View style={styles.notifSectionHeader}>
+                  <Ionicons name="hardware-chip-outline" size={16} color={THEME.colors.primary} />
+                  <Text style={styles.notifSectionTitle}>Task 01 – Register Device</Text>
+                </View>
+                <View style={styles.tokenStatusRow}>
+                  <View style={[styles.statusIndicatorDot, isPushRegistered ? styles.dotActive : styles.dotInactive]} />
+                  <Text style={styles.tokenStatusText}>{pushStatusText}</Text>
+                </View>
+                <View style={styles.tokenCodeBox}>
+                  <Text style={styles.tokenCodeLabel}>Expo Push Token:</Text>
+                  <Text style={styles.tokenCodeValue} numberOfLines={2} selectable>
+                    {expoPushToken || 'Belum terdaftar'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Task 02 & 03: Panel Pengujian Notifikasi */}
+              <View style={styles.notifSectionBox}>
+                <View style={styles.notifSectionHeader}>
+                  <Ionicons name="paper-plane-outline" size={16} color={THEME.colors.primary} />
+                  <Text style={styles.notifSectionTitle}>Task 02 & 03 – Kirim & Uji Deep Navigasi</Text>
+                </View>
+                <Text style={styles.notifTestInstructions}>
+                  Pilih skenario notifikasi di bawah. Saat notifikasi muncul, ketuk banner notifikasi untuk memverifikasi auto-routing (Task 03):
+                </Text>
+
+                <TouchableOpacity
+                  style={styles.notifActionBtn}
+                  onPress={() => handleSendTestNotification('TRANSACTION')}
+                  disabled={isSendingTestNotif}
+                >
+                  <View style={[styles.notifBtnIcon, { backgroundColor: '#DBEAFE' }]}>
+                    <Ionicons name="receipt-outline" size={18} color="#2563EB" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.notifBtnTitle}>1. Transaksi Baru Masuk</Text>
+                    <Text style={styles.notifBtnDesc}>Payload: target screen 'RIWAYAT'</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={THEME.colors.textMuted} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.notifActionBtn}
+                  onPress={() => handleSendTestNotification('SHIFT')}
+                  disabled={isSendingTestNotif}
+                >
+                  <View style={[styles.notifBtnIcon, { backgroundColor: '#FEF3C7' }]}>
+                    <Ionicons name="time-outline" size={18} color="#D97706" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.notifBtnTitle}>2. Shift Ditutup</Text>
+                    <Text style={styles.notifBtnDesc}>Payload: target screen 'SHIFT'</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={THEME.colors.textMuted} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.notifActionBtn}
+                  onPress={() => handleSendTestNotification('PRESENSI')}
+                  disabled={isSendingTestNotif}
+                >
+                  <View style={[styles.notifBtnIcon, { backgroundColor: '#D1FAE5' }]}>
+                    <Ionicons name="finger-print-outline" size={18} color="#059669" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.notifBtnTitle}>3. Pengingat Presensi</Text>
+                    <Text style={styles.notifBtnDesc}>Payload: target screen 'PRESENSI'</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={THEME.colors.textMuted} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.notifActionBtn}
+                  onPress={() => handleSendTestNotification('MENU')}
+                  disabled={isSendingTestNotif}
+                >
+                  <View style={[styles.notifBtnIcon, { backgroundColor: '#FEE2E2' }]}>
+                    <Ionicons name="alert-circle-outline" size={18} color="#DC2626" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.notifBtnTitle}>4. Peringatan Stok Menu</Text>
+                    <Text style={styles.notifBtnDesc}>Payload: target screen 'MENU'</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={THEME.colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Data Notifikasi Terakhir yang Diterima */}
+              {lastNotification && (
+                <View style={[styles.notifSectionBox, { backgroundColor: '#F8FAFC' }]}>
+                  <View style={styles.notifSectionHeader}>
+                    <Ionicons name="checkmark-done-circle-outline" size={16} color="#059669" />
+                    <Text style={[styles.notifSectionTitle, { color: '#059669' }]}>
+                      Notifikasi Terakhir Diterima ({lastNotification.timestamp})
+                    </Text>
+                  </View>
+                  <Text style={styles.lastNotifTitle}>{lastNotification.title}</Text>
+                  <Text style={styles.lastNotifBody}>{lastNotification.body}</Text>
+                  <Text style={styles.lastNotifData}>
+                    Payload: {JSON.stringify(lastNotification.data)}
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1163,5 +1472,166 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.6,
+  },
+
+  // Notification Modal Styles (Task 01, 02, 03)
+  notifModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'flex-end',
+  },
+  notifModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '85%',
+    ...THEME.shadows.lg,
+  },
+  notifModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.colors.border,
+  },
+  notifHeaderIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: THEME.colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: THEME.colors.textDark,
+  },
+  notifModalSubtitle: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+    fontWeight: '600',
+  },
+  notifCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifSectionBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  notifSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  notifSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.primaryDark,
+  },
+  tokenStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  statusIndicatorDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
+  dotActive: {
+    backgroundColor: '#10B981',
+  },
+  dotInactive: {
+    backgroundColor: '#F59E0B',
+  },
+  tokenStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: THEME.colors.textDark,
+  },
+  tokenCodeBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  tokenCodeLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.colors.textMuted,
+    marginBottom: 2,
+  },
+  tokenCodeValue: {
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: THEME.colors.textDark,
+  },
+  notifTestInstructions: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
+    marginBottom: 10,
+    lineHeight: 16,
+  },
+  notifActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  notifBtnIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifBtnTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.textDark,
+  },
+  notifBtnDesc: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+  },
+  lastNotifTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.textDark,
+    marginBottom: 2,
+  },
+  lastNotifBody: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
+    marginBottom: 6,
+  },
+  lastNotifData: {
+    fontSize: 10,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: '#059669',
+    backgroundColor: '#ECFDF5',
+    padding: 6,
+    borderRadius: 6,
   },
 });
