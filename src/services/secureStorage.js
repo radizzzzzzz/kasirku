@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-import { generateJWT } from './jwt';
+import { generateJWT, verifyJWT } from './jwt';
 
 // Keys used in Secure Storage
 export const SECURE_KEYS = {
@@ -10,6 +10,8 @@ export const SECURE_KEYS = {
   ACCESS_TOKEN: 'access_token',
   USERS_DB: 'kasirku_secure_users',
   REMEMBERED_USER: 'kasirku_remembered_user',
+  BIOMETRIC_SESSION: 'kasirku_biometric_session',
+  BIOMETRIC_LOGIN_ENABLED: 'kasirku_biometric_login_enabled',
 };
 
 // Default accounts seeded securely on first run
@@ -174,6 +176,87 @@ export const AuthService = {
   // Get remembered credentials (if any)
   getRememberedUser: async () => {
     return await SecureStorage.getItem(SECURE_KEYS.REMEMBERED_USER, null);
+  },
+
+  getBiometricLoginEnabled: async () => {
+    return (await SecureStorage.getItem(SECURE_KEYS.BIOMETRIC_LOGIN_ENABLED, false)) === true;
+  },
+
+  setBiometricLoginEnabled: async (enabled) => {
+    if (!enabled) {
+      if (await checkAvailability()) {
+        await SecureStore.deleteItemAsync(SECURE_KEYS.BIOMETRIC_SESSION);
+      }
+    }
+
+    const saved = await SecureStorage.setItem(
+      SECURE_KEYS.BIOMETRIC_LOGIN_ENABLED,
+      enabled === true
+    );
+    if (!saved) {
+      throw new Error('Pengaturan login biometrik gagal disimpan.');
+    }
+  },
+
+  saveBiometricSession: async (session) => {
+    if (!session?.token || !session?.user) {
+      throw new Error('Sesi login tidak valid untuk login biometrik.');
+    }
+    if (!(await checkAvailability())) {
+      throw new Error('Penyimpanan aman perangkat tidak tersedia untuk login biometrik.');
+    }
+
+    await SecureStore.setItemAsync(SECURE_KEYS.BIOMETRIC_SESSION, JSON.stringify(session), {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
+  },
+
+  getBiometricSession: async () => {
+    if (!(await checkAvailability())) {
+      throw new Error('Penyimpanan aman perangkat tidak tersedia untuk login biometrik.');
+    }
+    const storedSession = await SecureStore.getItemAsync(SECURE_KEYS.BIOMETRIC_SESSION);
+    if (!storedSession) return null;
+
+    try {
+      return JSON.parse(storedSession);
+    } catch (err) {
+      throw new Error('Data sesi biometrik rusak. Silakan masuk dengan kata sandi.');
+    }
+  },
+
+  restoreBiometricSession: async () => {
+    const session = await AuthService.getBiometricSession();
+    const expiresAt = Date.parse(session?.expires_at || '');
+    if (!session?.token || !session?.user || !Number.isFinite(expiresAt)) {
+      if (await checkAvailability()) {
+        await SecureStore.deleteItemAsync(SECURE_KEYS.BIOMETRIC_SESSION);
+      }
+      throw new Error('Sesi biometrik tidak valid. Silakan masuk dengan kata sandi.');
+    }
+
+    const tokenValidation = verifyJWT(session.token);
+    if (expiresAt <= Date.now() || !tokenValidation.valid) {
+      await SecureStore.deleteItemAsync(SECURE_KEYS.BIOMETRIC_SESSION);
+      throw new Error(
+        expiresAt <= Date.now() || tokenValidation.error?.includes('kedaluwarsa')
+          ? 'Sesi biometrik kedaluwarsa. Silakan masuk dengan kata sandi.'
+          : 'Sesi biometrik tidak valid. Silakan masuk dengan kata sandi.'
+      );
+    }
+
+    const tokenSaved = await SecureStorage.setItem(SECURE_KEYS.ACCESS_TOKEN, session.token);
+    const sessionSaved = await SecureStorage.setItem(SECURE_KEYS.AUTH_SESSION, session);
+    if (!tokenSaved || !sessionSaved) {
+      throw new Error('Sesi biometrik gagal dipulihkan. Silakan masuk dengan kata sandi.');
+    }
+    return session;
+  },
+
+  rememberBiometricSessionIfEnabled: async (session) => {
+    if (!(await AuthService.getBiometricLoginEnabled())) return false;
+    await AuthService.saveBiometricSession(session);
+    return true;
   },
 
   // Login with Username or Email and Password
@@ -397,4 +480,3 @@ export const AuthService = {
     throw new Error('PIN atau Kata Sandi Supervisor salah. Akses ditolak!');
   },
 };
-

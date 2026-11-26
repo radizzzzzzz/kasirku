@@ -13,6 +13,7 @@ import {
   Vibration,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { THEME } from '../constants/theme';
 import { AuthService } from '../services/secureStorage';
 import { StorageService } from '../services/storage';
@@ -31,6 +32,9 @@ export default function AuthScreen({ onLoginSuccess }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const [biometricsAvailable, setBiometricsAvailable] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricSessionReady, setBiometricSessionReady] = useState(false);
 
   // Register form state
   const [regName, setRegName] = useState('');
@@ -54,12 +58,51 @@ export default function AuthScreen({ onLoginSuccess }) {
         } else if (history && history.length > 0) {
           setLoginIdentifier(history[0].username || history[0].email);
         }
+
+        if (Platform.OS !== 'web') {
+          const [hasHardware, isEnrolled, isEnabled, biometricSession] = await Promise.all([
+            LocalAuthentication.hasHardwareAsync(),
+            LocalAuthentication.isEnrolledAsync(),
+            AuthService.getBiometricLoginEnabled(),
+            AuthService.getBiometricSession(),
+          ]);
+          setBiometricsAvailable(hasHardware && isEnrolled);
+          setBiometricEnabled(isEnabled);
+          setBiometricSessionReady(
+            isEnabled &&
+              !!biometricSession?.token &&
+              Date.parse(biometricSession.expires_at || '') > Date.now()
+          );
+        }
       } catch (e) {
-        console.warn('Error loading login history:', e);
+        console.warn('Error loading login and biometric settings:', e);
       }
     }
     initAuth();
   }, []);
+
+  const findOrCreateEmployee = async (session) => {
+    const employees = (await StorageService.getEmployees()) || [];
+    let matchedEmp = employees.find(
+      (employee) =>
+        (session.user.employeeId && employee.id === session.user.employeeId) ||
+        employee.name.toLowerCase() === session.user.name.toLowerCase()
+    );
+
+    if (!matchedEmp) {
+      matchedEmp = {
+        id: session.user.employeeId || `EMP-${Date.now().toString().slice(-4)}`,
+        name: session.user.name,
+        role: session.user.role,
+        phone: '0812-0000-0000',
+        pin: '1234',
+      };
+      await StorageService.addEmployee(matchedEmp);
+    }
+
+    await StorageService.setActiveEmployee(matchedEmp);
+    return matchedEmp;
+  };
 
   const handleLogin = async (overrideIdentifier, overridePassword) => {
     const idToUse = overrideIdentifier || loginIdentifier;
@@ -81,27 +124,18 @@ export default function AuthScreen({ onLoginSuccess }) {
     try {
       // Login via ApiClient -> triggers console [2], [3], [4] and stores access_token in SecureStore
       const { session } = await ApiClient.login(idToUse, passToUse);
-      
-      // Also sync active employee with the logged in user
-      const employees = await StorageService.getEmployees();
-      let matchedEmp = employees.find(
-        (e) =>
-          (session.user.employeeId && e.id === session.user.employeeId) ||
-          e.name.toLowerCase() === session.user.name.toLowerCase()
-      );
+      const matchedEmp = await findOrCreateEmployee(session);
 
-      if (!matchedEmp) {
-        matchedEmp = {
-          id: session.user.employeeId || `EMP-${Date.now().toString().slice(-4)}`,
-          name: session.user.name,
-          role: session.user.role,
-          phone: '0812-0000-0000',
-          pin: '1234',
-        };
-        await StorageService.addEmployee(matchedEmp);
+      if (biometricEnabled) {
+        try {
+          await AuthService.saveBiometricSession(session);
+          await AuthService.setBiometricLoginEnabled(true);
+          setBiometricSessionReady(true);
+        } catch (storageError) {
+          console.error('Gagal menyimpan sesi login biometrik:', storageError);
+          setErrorMessage('Login berhasil, tetapi sesi biometrik gagal disimpan.');
+        }
       }
-
-      await StorageService.setActiveEmployee(matchedEmp);
 
       // Record to login history
       await StorageService.recordLoginHistory(session.user);
@@ -126,6 +160,59 @@ export default function AuthScreen({ onLoginSuccess }) {
       setErrorMessage(err.message || 'Gagal masuk. Periksa kembali akun Anda.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleBiometricLogin = async () => {
+    if (isLoading) return;
+    setErrorMessage('');
+    setIsLoading(true);
+
+    try {
+      const [hasHardware, isEnrolled] = await Promise.all([
+        LocalAuthentication.hasHardwareAsync(),
+        LocalAuthentication.isEnrolledAsync(),
+      ]);
+      if (!hasHardware || !isEnrolled) {
+        throw new Error('Biometrik tidak tersedia. Silakan masuk dengan kata sandi.');
+      }
+
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Verifikasi biometrik untuk masuk ke KasirKu',
+        cancelLabel: 'Batal',
+      });
+      if (!result.success) {
+        if (result.error !== 'user_cancel' && result.error !== 'app_cancel') {
+          setErrorMessage('Verifikasi biometrik gagal. Silakan coba lagi atau gunakan kata sandi.');
+        }
+        return;
+      }
+
+      const session = await AuthService.restoreBiometricSession();
+      const matchedEmp = await findOrCreateEmployee(session);
+      await StorageService.recordLoginHistory(session.user);
+      const updatedHistory = await StorageService.getLoginHistory();
+      setLoginHistory(updatedHistory || []);
+      setTokenSuccessModal({ session, matchedEmp, user: session.user });
+    } catch (err) {
+      setBiometricSessionReady(false);
+      setErrorMessage(err.message || 'Login biometrik gagal. Silakan masuk dengan kata sandi.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleToggleBiometric = async () => {
+    const nextEnabled = !biometricEnabled;
+    setBiometricEnabled(nextEnabled);
+    if (!nextEnabled) {
+      try {
+        await AuthService.setBiometricLoginEnabled(false);
+        setBiometricSessionReady(false);
+      } catch (err) {
+        setBiometricEnabled(true);
+        setErrorMessage(err.message || 'Pengaturan biometrik gagal diubah.');
+      }
     }
   };
 
@@ -366,6 +453,19 @@ export default function AuthScreen({ onLoginSuccess }) {
                 <Text style={styles.rememberText}>Simpan sesi di Secure Storage (Ingat Saya)</Text>
               </TouchableOpacity>
 
+              {biometricsAvailable && (
+                <TouchableOpacity
+                  style={styles.rememberRow}
+                  onPress={handleToggleBiometric}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.checkbox, biometricEnabled && styles.checkboxActive]}>
+                    {biometricEnabled && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
+                  </View>
+                  <Text style={styles.rememberText}>Aktifkan login biometrik di perangkat ini</Text>
+                </TouchableOpacity>
+              )}
+
               {/* Submit Button */}
               <TouchableOpacity
                 style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
@@ -387,6 +487,24 @@ export default function AuthScreen({ onLoginSuccess }) {
                   </>
                 )}
               </TouchableOpacity>
+
+              {biometricsAvailable && biometricEnabled && biometricSessionReady && (
+                <TouchableOpacity
+                  style={[styles.biometricButton, isLoading && styles.buttonDisabled]}
+                  onPress={handleBiometricLogin}
+                  disabled={isLoading}
+                  activeOpacity={0.8}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color={THEME.colors.primary} />
+                  ) : (
+                    <>
+                      <Ionicons name="finger-print" size={21} color={THEME.colors.primary} />
+                      <Text style={styles.biometricButtonText}>Masuk dengan biometrik</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
 
               {/* History Login User (Pilih user lalu masukkan sandi) */}
               {loginHistory.length > 0 && (
@@ -854,6 +972,22 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: '#FFFFFF',
     fontSize: 15,
+    fontWeight: '800',
+  },
+  biometricButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: THEME.colors.primary,
+    gap: 8,
+  },
+  biometricButtonText: {
+    color: THEME.colors.primary,
+    fontSize: 14,
     fontWeight: '800',
   },
   quickAccessSection: {

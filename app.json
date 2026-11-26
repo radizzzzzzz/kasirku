@@ -9,15 +9,14 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "Aplikasi KasirKu membutuhkan izin akses kamera untuk mengambil foto presensi karyawan."
+        "NSCameraUsageDescription": "Aplikasi KasirKu membutuhkan izin akses kamera untuk mengambil foto presensi karyawan.",
+        "NSFaceIDUsageDescription": "KasirKu menggunakan biometrik perangkat untuk memverifikasi login."
       }
     },
     "android": {
       "package": "com.kasirku.app",
       "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.VIBRATE"
+        "android.permission.CAMERA"
       ]
     },
     "web": {
@@ -35,18 +34,11 @@
         }
       ],
       [
-        "expo-notifications",
+        "expo-local-authentication",
         {
-          "icon": "./assets/qris.jpg",
-          "color": "#2563EB",
-          "sounds": []
+          "faceIDPermission": "Izinkan KasirKu menggunakan biometrik perangkat untuk verifikasi login."
         }
       ]
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "kasirku-pos-app"
-      }
-    }
+    ]
   }
 }

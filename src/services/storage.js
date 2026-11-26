@@ -11,7 +11,6 @@ const KEYS = {
   TRANSACTIONS: '@kasirku_transactions',
   STORE_INFO: '@kasirku_store_info',
   LOGIN_HISTORY: '@kasirku_login_history',
-  PUSH_TOKEN: '@kasirku_push_token',
 };
 
 // Memory fallback in case storage has issues or is initializing
@@ -209,11 +208,6 @@ export const StorageService = {
     await safeSet(KEYS.LOGIN_HISTORY, updated);
     return updated;
   },
-
-  // Push Token (Task 01)
-  getPushToken: async () => safeGet(KEYS.PUSH_TOKEN, null),
-  savePushToken: async (token) => safeSet(KEYS.PUSH_TOKEN, token),
-  removePushToken: async () => safeSet(KEYS.PUSH_TOKEN, null),
 
   // Format IDR Helper
   formatIDR: (amount) => {
